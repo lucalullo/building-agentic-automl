@@ -28,6 +28,17 @@ Version 1 establishes the fundamental AutoML workflow:
 7. train and evaluate the model;
 8. return a structured state.
 
+Version 2 extends this baseline with a dedicated **Data Inspector**:
+
+1. inspect dataset dimensions;
+2. inspect target distribution or summary statistics;
+3. inspect feature data types;
+4. detect missing values;
+5. measure feature cardinality;
+6. store the inspection inside the agent state.
+
+The modeling pipeline remains intentionally unchanged so that the effect of the new capability can be studied in isolation.
+
 Future versions will progressively introduce more robust preprocessing, model comparison, validation strategies, optimization and more advanced agentic components.
 
 ## Repository
@@ -45,6 +56,12 @@ The current agent can:
 - detect whether the problem is classification or regression;
 - identify numerical features automatically;
 - identify categorical features automatically;
+- inspect dataset dimensions;
+- inspect target distribution for classification tasks;
+- inspect target summary statistics for regression tasks;
+- inspect feature data types;
+- detect missing values;
+- measure feature cardinality;
 - convert categorical features to the pandas `category` dtype;
 - select a LightGBM baseline model according to the detected task;
 - select an evaluation metric automatically;
@@ -53,7 +70,7 @@ The current agent can:
 - train the selected model;
 - evaluate the model;
 - adapt automatically between classification and regression;
-- return the complete result as a structured state.
+- return the complete result together with the dataset inspection as a structured state.
 
 For classification:
 
@@ -78,6 +95,8 @@ Dataset + Target
        ↓
 Feature Detection
        ↓
+ Data Inspection
+       ↓
  Data Preparation
        ↓
  Model Selection
@@ -91,38 +110,66 @@ Training + Evaluation
       State
 ```
 
-The current architecture is intentionally compact.
+The current architecture remains intentionally compact.
 
-The `agent()` function coordinates the complete workflow.
+The `agent()` function still coordinates the complete workflow.
 
 It first loads the dataset and determines whether the target represents a classification or regression problem.
 
 The agent then detects numerical and categorical features directly from the dataframe dtypes.
 
-Categorical columns are converted to the pandas `category` dtype so they can be handled directly by LightGBM.
+Version 2 adds the `inspect_dataset()` component before data preparation. The inspector records dataset shape, target information, feature dtypes, missing values and feature cardinality.
+
+Categorical columns are then converted to the pandas `category` dtype so they can be handled directly by LightGBM.
 
 The model and metric are selected according to the detected task.
 
-The dataset is then divided into training and validation subsets, the baseline model is trained, its performance is evaluated, and the result is returned as a structured state.
+The dataset is divided into training and validation subsets, the baseline model is trained, its performance is evaluated, and the result is returned together with the inspection as a structured state.
 
-A typical classification state looks like:
+A typical classification state from the Adult Income dataset looks like:
 
 ```python
 {
     "task": "classification",
     "numerical_features": [
-        "num_1",
-        "num_2",
-        "num_3",
-        "num_4"
+        "age",
+        "fnlwgt",
+        "education_num",
+        "capital_gain",
+        "capital_loss",
+        "hours_per_week"
     ],
     "categorical_features": [
-        "category_1",
-        "category_2"
+        "workclass",
+        "education",
+        "marital_status",
+        "occupation",
+        "relationship",
+        "race",
+        "sex",
+        "native_country"
     ],
+    "inspection": {
+        "shape": {
+            "rows": 48842,
+            "columns": 15
+        },
+        "target": {
+            "name": "income",
+            "dtype": "object",
+            "unique_values": 2,
+            "distribution": {
+                "<=50K": 37155,
+                ">50K": 11687
+            }
+        },
+        "dtypes": {...},
+        "missing_values": {...},
+        "cardinality": {...}
+    },
     "model": "LGBMClassifier",
     "metric": "roc_auc",
-    "score": 0.9068167604752971
+    "score": 0.9311658417981501
 }
 ```
 
@@ -131,19 +178,35 @@ The same agent can also receive a regression dataset without changing its intern
 ```python
 {
     "task": "regression",
+    "inspection": {
+        "shape": {
+            "rows": 1200,
+            "columns": 7
+        },
+        "target": {
+            "name": "target",
+            "dtype": "float64",
+            "unique_values": 1200,
+            "summary": {...}
+        },
+        "dtypes": {...},
+        "missing_values": {...},
+        "cardinality": {...}
+    },
     "model": "LGBMRegressor",
     "metric": "rmse",
     "score": 1.8760451113860066
 }
 ```
 
-This is the first important AutoML behavior of the project: the system changes its modeling decisions according to the characteristics of the target.
+This is the next important AutoML behavior of the project: the system not only changes its modeling decisions according to the target, but also builds an explicit profile of the dataset before training.
 
 ## Project versions
 
 | Version | Main concept | Status | Folder |
 |---|---|---|---|
 | Version 1 | Baseline Agent | Completed | [`v01-baseline-agent`](v01-baseline-agent/) |
+| Version 2 | Data Inspector | Completed | [`v02-data-inspector`](v02-data-inspector/) |
 
 ## Version 1 - Baseline Agent
 
@@ -317,18 +380,225 @@ Open the folder:
 
 [`v01-baseline-agent`](v01-baseline-agent/)
 
+
+## Version 2 - Data Inspector
+
+Version 2 introduces the first new capability on top of the baseline agent: **dataset inspection before training**.
+
+The complete flow becomes:
+
+```text
+Dataset + Target
+       ↓
+  Detect Task
+       ↓
+ Detect Features
+       ↓
+ Inspect Dataset
+       ↓
+  Prepare Data
+       ↓
+ Select Model
+       ↓
+ Select Metric
+       ↓
+Train + Evaluate
+       ↓
+ State + Inspection
+```
+
+The objective is to make the agent more informed without changing the baseline modeling strategy introduced in Version 1.
+
+The main classification example now uses the **Adult Income** dataset, which contains 48,842 rows, 14 input features and the target column `income`.
+
+### Data inspection
+
+The new component is `inspect_dataset()`:
+
+```python
+def inspect_dataset(df, target):
+    X = df.drop(columns=target)
+    y = df[target]
+
+    target_info = {
+        "name": target,
+        "dtype": str(y.dtype),
+        "unique_values": int(y.nunique())
+    }
+
+    if y.nunique() <= 20:
+        target_info["distribution"] = y.value_counts(dropna=False).to_dict()
+    else:
+        target_info["summary"] = y.describe().to_dict()
+
+    return {
+        "shape": {"rows": len(df), "columns": len(df.columns)},
+        "target": target_info,
+        "dtypes": {column: str(dtype) for column, dtype in X.dtypes.items()},
+        "missing_values": df.isna().sum().to_dict(),
+        "cardinality": X.nunique(dropna=True).to_dict()
+    }
+```
+
+The inspector records five groups of information:
+
+```text
+shape          → rows and columns
+target         → name, dtype, unique values, distribution or summary
+dtypes         → feature data types
+missing_values → missing count for every column
+cardinality    → unique non-null values for every feature
+```
+
+For Adult Income, the inspector detects:
+
+```text
+rows    = 48,842
+columns = 15
+
+target distribution:
+<=50K = 37,155
+>50K  = 11,687
+
+main missing values:
+workclass      = 2,799
+occupation     = 2,809
+native_country = 857
+```
+
+The inspection is descriptive only. Version 2 reports these signals but does not yet automatically impute missing values, remove outliers or transform features.
+
+### Target inspection
+
+The inspector adapts its target summary according to the target structure.
+
+For classification, it stores the class distribution:
+
+```python
+"distribution": y.value_counts(dropna=False).to_dict()
+```
+
+For regression, it stores descriptive statistics:
+
+```python
+"summary": y.describe().to_dict()
+```
+
+This allows the same inspection logic to work with both discrete and continuous targets.
+
+### Missing values
+
+Missing values are counted for every column:
+
+```python
+"missing_values": df.isna().sum().to_dict()
+```
+
+This makes data-quality signals visible in the state without adding remediation logic yet.
+
+### Feature cardinality
+
+The inspector also measures the number of unique non-null values for every input feature:
+
+```python
+"cardinality": X.nunique(dropna=True).to_dict()
+```
+
+Cardinality provides a first structural signal that future versions can use for preprocessing and feature-handling decisions.
+
+### Agent
+
+Version 2 integrates the inspection step directly into the existing agent:
+
+```python
+def agent(data_path, target):
+    df = pd.read_csv(data_path)
+
+    task = detect_task(df, target)
+    numerical, categorical = detect_features(df, target)
+    inspection = inspect_dataset(df, target)
+    X, y = prepare_data(df, target, categorical)
+
+    model = select_model(task)
+    metric = select_metric(task)
+    score = train_and_evaluate(X, y, model, task)
+
+    return {
+        "task": task,
+        "numerical_features": numerical,
+        "categorical_features": categorical,
+        "inspection": inspection,
+        "model": model.__class__.__name__,
+        "metric": metric,
+        "score": float(score)
+    }
+```
+
+Only two architectural changes are required compared with Version 1:
+
+```python
+inspection = inspect_dataset(df, target)
+```
+
+and:
+
+```python
+"inspection": inspection,
+```
+
+The rest of the baseline pipeline remains unchanged.
+
+### Classification result
+
+On Adult Income, Version 2 obtains:
+
+```text
+task   = classification
+model  = LGBMClassifier
+metric = roc_auc
+score  = 0.9311658417981501
+```
+
+### Regression test
+
+The same agent is tested on `simple_regression.csv` using the target column `target`:
+
+```python
+REGRESSION_PATH = "/kaggle/input/datasets/lucalullo/agentic-automl-datasets/simple_regression.csv"
+
+regression_state = agent(REGRESSION_PATH, "target")
+```
+
+The agent automatically detects regression and returns:
+
+```text
+task   = regression
+model  = LGBMRegressor
+metric = rmse
+score  = 1.8760451113860066
+```
+
+The regression inspection reports 1,200 rows and 7 columns and summarizes the continuous target with descriptive statistics.
+
+Version 2 therefore adds the first explicit **dataset-awareness layer** to the project while preserving the minimal architecture of Version 1.
+
+Open the folder:
+
+[`v02-data-inspector`](v02-data-inspector/)
+
 ## Component responsibilities
 
 | Component | Responsibility |
 |---|---|
 | `detect_task()` | Determines whether the problem is classification or regression |
 | `detect_features()` | Identifies numerical and categorical features |
+| `inspect_dataset()` | Profiles shape, target, dtypes, missing values and feature cardinality |
 | `prepare_data()` | Prepares features and target for modeling |
 | `select_model()` | Selects the LightGBM baseline model |
 | `select_metric()` | Selects the evaluation metric |
 | `train_and_evaluate()` | Creates the split, trains the model and computes the score |
 | `agent()` | Coordinates the complete AutoML workflow |
-| State | Stores the task, detected features, model, metric and evaluation score |
+| State | Stores the task, detected features, dataset inspection, model, metric and evaluation score |
 
 ## Documentation
 
@@ -346,6 +616,13 @@ For Version 1:
 - [`Report Version 1 - Baseline Agent.pdf`](v01-baseline-agent/Report%20Version%201%20-%20Baseline%20Agent.pdf)
 - [`Version 1.png`](v01-baseline-agent/Version%201.png)
 
+For Version 2:
+
+- [`building-agentic-automl.ipynb`](v02-data-inspector/building-agentic-automl.ipynb)
+- [`Relazione Versione 2 - Data Inspector.pdf`](v02-data-inspector/Relazione%20Versione%202%20-%20Data%20Inspector.pdf)
+- [`Report Version 2 - Data Inspector.pdf`](v02-data-inspector/Report%20Version%202%20-%20Data%20Inspector.pdf)
+- [`Version 2.png`](v02-data-inspector/Version%202.png)
+
 ## Repository structure
 
 ```text
@@ -356,12 +633,18 @@ building-agentic-automl/
 │   ├── Report Version 1 - Baseline Agent.pdf
 │   └── Version 1.png
 │
+├── v02-data-inspector/
+│   ├── building-agentic-automl.ipynb
+│   ├── Relazione Versione 2 - Data Inspector.pdf
+│   ├── Report Version 2 - Data Inspector.pdf
+│   └── Version 2.png
+│
 ├── README.md
 ├── LICENSE
 └── .gitignore
 ```
 
-The repository structure will grow progressively as new versions are introduced.
+The repository structure grows progressively as new versions are introduced.
 
 Each completed version remains available independently so that every architectural step can be studied and compared with the following versions.
 
@@ -394,15 +677,16 @@ Start Jupyter Notebook:
 jupyter notebook
 ```
 
-Then open:
+Then open one of the completed versions:
 
 ```text
 v01-baseline-agent/building-agentic-automl.ipynb
+v02-data-inspector/building-agentic-automl.ipynb
 ```
 
 and run the cells in order.
 
-When running locally, update the dataset paths used inside the notebook so they point to the local CSV files.
+When running locally, update the dataset paths used inside the notebooks so they point to the local CSV files.
 
 ## Development approach
 
@@ -412,7 +696,7 @@ The project follows one main principle:
 
 Instead of immediately building a complex AutoML platform, the system evolves through small and understandable steps.
 
-Version 1 intentionally keeps the architecture minimal:
+Version 1 establishes the minimal agentic loop:
 
 ```text
 observe
@@ -428,13 +712,32 @@ evaluate
 return
 ```
 
-This makes each decision explicit and provides a clear foundation for progressively more autonomous AutoML behavior.
+Version 2 adds an explicit inspection step:
 
-Each completed version will remain available as an independent learning resource.
+```text
+observe
+   ↓
+inspect
+   ↓
+decide
+   ↓
+prepare
+   ↓
+train
+   ↓
+evaluate
+   ↓
+return
+```
+
+This makes the agent state progressively richer while keeping each architectural change easy to isolate and understand.
+
+Each completed version remains available as an independent learning resource.
 
 ## Roadmap
 
 - [x] Baseline Agent
+- [x] Data Inspector
 - [ ] More robust task detection
 - [ ] More advanced data validation and preprocessing
 - [ ] Multiple model families
@@ -453,37 +756,43 @@ The guiding rule remains:
 
 ## Current limitations
 
-Version 1 is intentionally compact and educational:
+Version 2 is intentionally compact and educational:
 
-- task detection relies only on the number of unique target values;
+- task detection still relies only on the number of unique target values;
+- the Data Inspector is descriptive and does not automatically fix detected issues;
+- missing values are reported but not explicitly imputed by the agent;
+- there is no dedicated outlier detection;
+- there is no explicit data-leakage detection;
+- duplicate rows, skewness and semantic feature types are not inspected yet;
 - only one model family, LightGBM, is available;
 - there is no comparison between multiple algorithms;
 - there is no hyperparameter optimization;
-- categorical conversion is the only explicit preprocessing strategy;
+- categorical conversion is still the only explicit preprocessing strategy;
 - evaluation uses a single train-validation split;
 - there is no cross-validation;
-- there is no advanced missing-value strategy;
-- there is no dedicated outlier handling;
-- there is no explicit data-leakage detection;
 - model selection is based only on the detected task;
 - all decisions are still coordinated directly by one `agent()` function;
 - there is no planner or multi-agent architecture yet.
 
 These limitations are intentional.
 
-They define the starting point from which the architecture can evolve progressively.
+Version 2 focuses on making the dataset visible to the agent before later versions begin acting automatically on the information discovered during inspection.
 
 ## Project status
 
 **Version 1 - Baseline Agent is completed.**
 
-The project currently provides the first functional foundation of Building Agentic AutoML.
+**Version 2 - Data Inspector is completed.**
+
+The project currently provides a functional Agentic AutoML baseline plus its first dataset-awareness layer.
 
 The agent can move automatically from a tabular dataset and target column to an evaluated LightGBM baseline while adapting between classification and regression.
 
-The project is intentionally not considered complete at Version 1.
+Before training, it can now also inspect dataset dimensions, target behavior, feature types, missing values and feature cardinality, and store this information inside the final state.
 
-Future versions can progressively introduce additional AutoML and agentic capabilities while preserving the educational structure of the project.
+The project is intentionally not considered complete at Version 2.
+
+Future versions can progressively turn the information collected by the inspector into automatic preprocessing, validation, model-selection and orchestration decisions while preserving the educational structure of the project.
 
 ## License
 
