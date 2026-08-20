@@ -2,7 +2,9 @@
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
 ![Jupyter Notebook](https://img.shields.io/badge/Jupyter-Notebook-F37626?logo=jupyter&logoColor=white)
-![LightGBM](https://img.shields.io/badge/LightGBM-Baseline-2E8B57)
+![LightGBM](https://img.shields.io/badge/LightGBM-Model-2E8B57)
+![XGBoost](https://img.shields.io/badge/XGBoost-Model-EB5B28)
+![CatBoost](https://img.shields.io/badge/CatBoost-Model-FFCC00)
 ![scikit-learn](https://img.shields.io/badge/scikit--learn-ML-F7931E?logo=scikitlearn&logoColor=white)
 
 A progressive educational project that shows how to build an **Agentic AutoML system step by step**, starting from a minimal baseline agent and gradually evolving toward a more autonomous machine learning workflow.
@@ -47,9 +49,18 @@ Version 3 adds a **Preprocessing Agent** while keeping the model and validation 
 6. select the best preprocessing strategy;
 7. store the experiments and selected strategy inside the agent state.
 
+Version 4 adds **Model Selection** while keeping preprocessing and validation unchanged:
+
+1. build candidate models for the detected task;
+2. compare LightGBM, XGBoost and CatBoost;
+3. evaluate every preprocessing-model combination using the same validation split;
+4. compare results using the same task-specific metric;
+5. select the best preprocessing-model combination;
+6. store all experiments, the selected preprocessing strategy, model and score inside the agent state.
+
 Each version preserves the previous workflow as much as possible so that the effect of the new capability can be studied in isolation.
 
-Future versions will progressively introduce model comparison, smarter validation, feature engineering, hyperparameter optimization and more advanced agentic components.
+Future versions will progressively introduce smarter validation, feature engineering, hyperparameter optimization and more advanced agentic components.
 
 ## Repository
 
@@ -73,25 +84,25 @@ The current agent can:
 - detect missing values;
 - measure feature cardinality;
 - try multiple preprocessing strategies;
-- keep missing values and let LightGBM handle them natively;
+- preserve missing values whenever the selected model supports them directly;
 - impute missing numerical values with the training median;
 - impute missing categorical values with the most frequent training value;
 - learn preprocessing parameters only from the training data;
 - align categorical vocabularies between training and validation data;
-- select a LightGBM baseline model according to the detected task;
+- build LightGBM, XGBoost and CatBoost candidates according to the detected task;
 - select an evaluation metric automatically;
 - create a train-validation split;
 - preserve class proportions during classification through stratification;
-- train and evaluate each preprocessing experiment;
+- train and evaluate every preprocessing-model experiment;
 - compare experiment results using the appropriate metric direction;
-- select the best preprocessing strategy;
+- select the best preprocessing-model combination;
 - adapt automatically between classification and regression;
-- return the complete result, dataset inspection, experiments and selected preprocessing strategy as a structured state.
+- return the complete result, dataset inspection, experiments, selected preprocessing strategy, selected model and best score as a structured state.
 
 For classification:
 
 ```text
-Model  → LGBMClassifier
+Models → LightGBM / XGBoost / CatBoost
 Metric → ROC AUC
 Best   → highest score
 ```
@@ -99,7 +110,7 @@ Best   → highest score
 For regression:
 
 ```text
-Model  → LGBMRegressor
+Models → LightGBM / XGBoost / CatBoost
 Metric → RMSE
 Best   → lowest score
 ```
@@ -109,26 +120,30 @@ Best   → lowest score
 ```text
 Dataset + Target
        ↓
- Task Detection
+  Task Detection
        ↓
-Feature Detection
+ Feature Detection
        ↓
  Data Inspection
        ↓
-  Prepare X / y
+   Prepare X / y
        ↓
 Try Preprocessing Strategies
   native / impute
+       ↓
+ Build Model Candidates
+LightGBM / XGBoost / CatBoost
        ↓
 Train / Validation Split
        ↓
 Preprocess Training + Validation
        ↓
-LightGBM Training + Evaluation
+ Train + Evaluate
+ every combination
        ↓
  Compare Experiments
        ↓
-Select Best Preprocessing
+ Select Best Experiment
        ↓
 State + Experiments
 ```
@@ -137,104 +152,56 @@ The current architecture remains intentionally compact.
 
 The `agent()` function still coordinates the complete workflow.
 
-It first loads the dataset, determines whether the target represents a classification or regression problem, detects numerical and categorical features, and runs the Data Inspector introduced in Version 2.
+It loads the dataset, detects the task and feature types, runs the Data Inspector introduced in Version 2, and keeps the preprocessing experiment logic introduced in Version 3.
 
-Version 3 keeps the inspection step unchanged and adds a small preprocessing experiment loop.
+Version 4 adds a model-selection layer. For each preprocessing strategy, the agent evaluates three high-performance boosting models: LightGBM, XGBoost and CatBoost.
 
-The raw features and target are first separated. For every available preprocessing strategy, the same train-validation split is recreated with `test_size=0.2` and `random_state=42`. Classification also uses stratification.
+The validation protocol remains unchanged: every experiment uses the same train-validation split with `test_size=0.2` and `random_state=42`. Classification also uses stratification.
 
-Two preprocessing strategies are currently available:
+Two preprocessing strategies remain available:
 
 ```text
-native → keep missing values and let LightGBM handle them
+native → preserve missing values whenever supported by the selected model
 impute → numerical median + categorical most frequent value
 ```
 
-Preprocessing parameters are learned only from the training subset. Categorical vocabularies are also built from training data and then applied consistently to training and validation data.
+Preprocessing parameters are learned only from the training subset. Some models require minimal technical adaptation of categorical features, but no new preprocessing concept is introduced in Version 4.
 
-Each strategy is evaluated with the same LightGBM model family and the metric selected for the detected task. The agent stores every experiment, compares the scores, and selects the best preprocessing result.
+The agent evaluates every preprocessing-model combination, stores all experiment results, compares them using the metric selected for the detected task and returns the best combination.
 
 A typical classification state from the Adult Income dataset looks like:
 
 ```python
 {
     "task": "classification",
-    "numerical_features": [
-        "age",
-        "fnlwgt",
-        "education_num",
-        "capital_gain",
-        "capital_loss",
-        "hours_per_week"
-    ],
-    "categorical_features": [
-        "workclass",
-        "education",
-        "marital_status",
-        "occupation",
-        "relationship",
-        "race",
-        "sex",
-        "native_country"
-    ],
-    "inspection": {
-        "shape": {
-            "rows": 48842,
-            "columns": 15
-        },
-        "target": {
-            "name": "income",
-            "dtype": "object",
-            "unique_values": 2,
-            "distribution": {
-                "<=50K": 37155,
-                ">50K": 11687
-            }
-        },
-        "dtypes": {...},
-        "missing_values": {...},
-        "cardinality": {...}
-    },
-    "model": "LGBMClassifier",
+    "numerical_features": [...],
+    "categorical_features": [...],
+    "inspection": {...},
     "metric": "roc_auc",
     "experiments": [
-        {
-            "preprocessing": "native",
-            "score": 0.9311658417981501
-        },
-        {
-            "preprocessing": "impute",
-            "score": 0.930687503244851
-        }
+        {"preprocessing": "native", "model": "LightGBM", "score": 0.9311658417981501},
+        {"preprocessing": "native", "model": "XGBoost", "score": 0.929098},
+        {"preprocessing": "native", "model": "CatBoost", "score": 0.931383},
+        {"preprocessing": "impute", "model": "LightGBM", "score": 0.930687503244851},
+        {"preprocessing": "impute", "model": "XGBoost", "score": 0.928546},
+        {"preprocessing": "impute", "model": "CatBoost", "score": 0.932104618262178}
     ],
-    "best_preprocessing": "native",
-    "score": 0.9311658417981501
+    "best_preprocessing": "impute",
+    "best_model": "CatBoost",
+    "best_score": 0.932104618262178
 }
 ```
 
-The same agent can also receive a regression dataset without changing its internal workflow:
+The same agent can also receive a regression dataset without changing its overall workflow. On `simple_regression.csv`, the best experiment is:
 
-```python
-{
-    "task": "regression",
-    "model": "LGBMRegressor",
-    "metric": "rmse",
-    "experiments": [
-        {
-            "preprocessing": "native",
-            "score": 1.8760451113860066
-        },
-        {
-            "preprocessing": "impute",
-            "score": 1.8776921187920332
-        }
-    ],
-    "best_preprocessing": "native",
-    "score": 1.8760451113860066
-}
+```text
+best_preprocessing = impute
+best_model         = CatBoost
+best_score         = 1.6542186741
+metric             = RMSE
 ```
 
-Version 3 therefore introduces the first explicit experiment loop in the project: the agent no longer uses one fixed preparation choice, but tries alternatives, evaluates them under the same protocol, and retains the evidence behind the selected result.
+Version 4 therefore adds the first explicit **model-selection layer** while preserving the preprocessing and validation logic established in the previous versions.
 
 ## Project versions
 
@@ -243,6 +210,7 @@ Version 3 therefore introduces the first explicit experiment loop in the project
 | Version 1 | Baseline Agent | Completed | [`v01-baseline-agent`](v01-baseline-agent/) |
 | Version 2 | Data Inspector | Completed | [`v02-data-inspector`](v02-data-inspector/) |
 | Version 3 | Preprocessing Agent | Completed | [`v03-preprocessing-agent`](v03-preprocessing-agent/) |
+| Version 4 | Model Selection | Completed | [`v04-model-selection`](v04-model-selection/) |
 
 ## Version 1 - Baseline Agent
 
@@ -845,6 +813,216 @@ Open the folder:
 
 [`v03-preprocessing-agent`](v03-preprocessing-agent/)
 
+## Version 4 - Model Selection
+
+Version 4 introduces the next capability on top of preprocessing experimentation: **automatic model comparison**.
+
+The complete flow becomes:
+
+```text
+Dataset + Target
+       ↓
+   Detect Task
+       ↓
+  Detect Features
+       ↓
+  Inspect Dataset
+       ↓
+    Prepare X / y
+       ↓
+Try Preprocessing
+ native / impute
+       ↓
+ Build Candidate Models
+LightGBM / XGBoost / CatBoost
+       ↓
+ Train + Evaluate
+ every combination
+       ↓
+ Compare Experiments
+       ↓
+ Select Best
+       ↓
+ State + Experiments
+```
+
+The objective is to let the agent choose among multiple strong model candidates while keeping preprocessing and validation unchanged.
+
+The main classification example continues to use the **Adult Income** dataset so that model selection is the only new concept introduced in this version.
+
+### Model candidates
+
+Version 4 compares three high-performance boosting models:
+
+```text
+LightGBM
+XGBoost
+CatBoost
+```
+
+The available models depend on the detected task:
+
+```python
+def select_models(task, categorical_features):
+    if task == "classification":
+        return {
+            "LightGBM": LGBMClassifier(random_state=42, verbosity=-1),
+            "XGBoost": XGBClassifier(
+                random_state=42,
+                tree_method="hist",
+                enable_categorical=True,
+                verbosity=0
+            ),
+            "CatBoost": CatBoostClassifier(
+                random_seed=42,
+                cat_features=categorical_features,
+                verbose=False,
+                allow_writing_files=False
+            )
+        }
+
+    return {
+        "LightGBM": LGBMRegressor(random_state=42, verbosity=-1),
+        "XGBoost": XGBRegressor(
+            random_state=42,
+            tree_method="hist",
+            enable_categorical=True,
+            verbosity=0
+        ),
+        "CatBoost": CatBoostRegressor(
+            random_seed=42,
+            cat_features=categorical_features,
+            verbose=False,
+            allow_writing_files=False
+        )
+    }
+```
+
+Hyperparameter optimization is deliberately excluded from this version.
+
+### Model-selection experiments
+
+Every preprocessing strategy is evaluated with every candidate model:
+
+```python
+experiments = []
+
+for preprocessing in PREPROCESSING_STRATEGIES:
+    for model_name, model in models.items():
+        score = train_and_evaluate(
+            X, y, model, model_name, task,
+            numerical_features,
+            categorical_features,
+            preprocessing
+        )
+
+        experiments.append({
+            "preprocessing": preprocessing,
+            "model": model_name,
+            "score": float(score)
+        })
+```
+
+This produces a compact experiment grid:
+
+```text
+preprocessing × model → score
+```
+
+The same train-validation split and metric logic are preserved from Version 3.
+
+### Best experiment selection
+
+The existing experiment-selection logic remains unchanged:
+
+```python
+def select_best_experiment(experiments, metric):
+    if metric == "rmse":
+        return min(experiments, key=lambda experiment: experiment["score"])
+
+    return max(experiments, key=lambda experiment: experiment["score"])
+```
+
+Therefore:
+
+```text
+ROC AUC → maximize
+RMSE    → minimize
+```
+
+### Agent
+
+Version 4 integrates model comparison directly into the existing agent:
+
+```python
+def agent(data_path, target):
+    df = pd.read_csv(data_path)
+
+    task = detect_task(df, target)
+    numerical, categorical = detect_features(df, target)
+    inspection = inspect_dataset(df, target)
+    X, y = prepare_data(df, target)
+
+    metric = select_metric(task)
+    models = select_models(task, categorical)
+    experiments = []
+
+    for preprocessing in PREPROCESSING_STRATEGIES:
+        for model_name, model in models.items():
+            score = train_and_evaluate(
+                X, y, model, model_name, task,
+                numerical, categorical, preprocessing
+            )
+
+            experiments.append({
+                "preprocessing": preprocessing,
+                "model": model_name,
+                "score": float(score)
+            })
+
+    best_experiment = select_best_experiment(experiments, metric)
+
+    return {
+        "task": task,
+        "numerical_features": numerical,
+        "categorical_features": categorical,
+        "inspection": inspection,
+        "metric": metric,
+        "experiments": experiments,
+        "best_preprocessing": best_experiment["preprocessing"],
+        "best_model": best_experiment["model"],
+        "best_score": best_experiment["score"]
+    }
+```
+
+### Classification result
+
+On Adult Income, Version 4 selects:
+
+```text
+best_preprocessing = impute
+best_model         = CatBoost
+best_score         = 0.932104618262178
+metric             = ROC AUC
+```
+
+### Regression test
+
+On `simple_regression.csv`, Version 4 selects:
+
+```text
+best_preprocessing = impute
+best_model         = CatBoost
+best_score         = 1.6542186741
+metric             = RMSE
+```
+
+Version 4 therefore adds an explicit **model-selection layer** while keeping task detection, inspection, preprocessing strategies, metrics and validation protocol unchanged.
+
+Open the folder:
+
+[`v04-model-selection`](v04-model-selection/)
+
 ## Component responsibilities
 
 | Component | Responsibility |
@@ -854,12 +1032,12 @@ Open the folder:
 | `inspect_dataset()` | Profiles shape, target, dtypes, missing values and feature cardinality |
 | `prepare_data()` | Separates input features `X` from target `y` |
 | `preprocess_data()` | Applies the selected preprocessing strategy using parameters learned from training data |
-| `select_model()` | Selects the LightGBM baseline model |
+| `select_models()` | Builds LightGBM, XGBoost and CatBoost candidates for the detected task |
 | `select_metric()` | Selects the evaluation metric |
-| `train_and_evaluate()` | Creates the split, applies preprocessing, trains the model and computes the score |
-| `select_best_experiment()` | Selects the best preprocessing experiment according to the metric direction |
-| `agent()` | Coordinates the complete AutoML workflow and preprocessing experiment loop |
-| State | Stores task, features, inspection, model, metric, experiments, selected preprocessing and final score |
+| `train_and_evaluate()` | Creates the split, applies preprocessing, trains the selected model and computes the score |
+| `select_best_experiment()` | Selects the best preprocessing-model experiment according to the metric direction |
+| `agent()` | Coordinates the complete AutoML workflow and experiment grid |
+| State | Stores task, features, inspection, metric, experiments, selected preprocessing, selected model and best score |
 
 ## Documentation
 
@@ -891,6 +1069,13 @@ For Version 3:
 - [`Report Version 3 - Preprocessing Agent.pdf`](v03-preprocessing-agent/Report%20Version%203%20-%20Preprocessing%20Agent.pdf)
 - [`Version 3.png`](v03-preprocessing-agent/Version%203.png)
 
+For Version 4:
+
+- [`building-agentic-automl.ipynb`](v04-model-selection/building-agentic-automl.ipynb)
+- [`Relazione Versione 4 - Model Selection.pdf`](v04-model-selection/Relazione%20Versione%204%20-%20Model%20Selection.pdf)
+- [`Report Version 4 - Model Selection.pdf`](v04-model-selection/Report%20Version%204%20-%20Model%20Selection.pdf)
+- [`Version 4.png`](v04-model-selection/Version%204.png)
+
 ## Repository structure
 
 ```text
@@ -913,6 +1098,12 @@ building-agentic-automl/
 │   ├── Report Version 3 - Preprocessing Agent.pdf
 │   └── Version 3.png
 │
+├── v04-model-selection/
+│   ├── building-agentic-automl.ipynb
+│   ├── Relazione Versione 4 - Model Selection.pdf
+│   ├── Report Version 4 - Model Selection.pdf
+│   └── Version 4.png
+│
 ├── README.md
 ├── LICENSE
 └── .gitignore
@@ -930,12 +1121,14 @@ Each completed version remains available independently so that every architectur
 - Jupyter Notebook or JupyterLab
 - pandas
 - LightGBM
+- XGBoost
+- CatBoost
 - scikit-learn
 
 Install the main dependencies:
 
 ```bash
-pip install pandas lightgbm scikit-learn jupyter
+pip install pandas lightgbm xgboost catboost scikit-learn jupyter
 ```
 
 Clone the repository:
@@ -957,6 +1150,7 @@ Then open one of the completed versions:
 v01-baseline-agent/building-agentic-automl.ipynb
 v02-data-inspector/building-agentic-automl.ipynb
 v03-preprocessing-agent/building-agentic-automl.ipynb
+v04-model-selection/building-agentic-automl.ipynb
 ```
 
 and run the cells in order.
@@ -1012,7 +1206,7 @@ observe
    ↓
 inspect
    ↓
-try
+try preprocessing
    ↓
 evaluate
    ↓
@@ -1023,7 +1217,27 @@ select
 return
 ```
 
-The state now becomes richer not only because it stores dataset information, but also because it records alternative preprocessing experiments and the selected result.
+Version 4 extends the experiment loop to model selection:
+
+```text
+observe
+   ↓
+inspect
+   ↓
+try preprocessing
+   ↓
+try models
+   ↓
+evaluate
+   ↓
+compare
+   ↓
+select
+   ↓
+return
+```
+
+The state now records dataset information, alternative preprocessing-model experiments, the selected preprocessing strategy, the selected model and the best score.
 
 Each completed version remains available as an independent learning resource.
 
@@ -1032,7 +1246,7 @@ Each completed version remains available as an independent learning resource.
 - [x] Version 1 - Baseline Agent
 - [x] Version 2 - Data Inspector
 - [x] Version 3 - Preprocessing Agent
-- [ ] Version 4 - Model Selection
+- [x] Version 4 - Model Selection
 - [ ] Version 5 - Smart Validation
 - [ ] Version 6 - Feature Engineering
 - [ ] Version 7 - Hyperparameter Optimization
@@ -1046,10 +1260,10 @@ The guiding rule remains:
 
 ## Current limitations
 
-Version 3 is intentionally compact and educational:
+Version 4 is intentionally compact and educational:
 
 - task detection still relies only on the number of unique target values;
-- the Data Inspector remains descriptive and does not decide which preprocessing strategies should be tried;
+- the Data Inspector remains descriptive and does not decide which preprocessing strategies or models should be tried;
 - only two preprocessing strategies are compared: native missing-value handling and simple imputation;
 - numerical imputation uses only the median;
 - categorical imputation uses only the most frequent value;
@@ -1057,18 +1271,17 @@ Version 3 is intentionally compact and educational:
 - there is no dedicated outlier detection or treatment;
 - there is no explicit data-leakage detection beyond fitting preprocessing parameters only on training data;
 - duplicate rows, skewness and semantic feature types are not inspected yet;
-- only one model family, LightGBM, is available;
-- there is no comparison between multiple algorithms;
-- there is no hyperparameter optimization;
+- model comparison is limited to LightGBM, XGBoost and CatBoost;
+- hyperparameters remain fixed at default or near-default values;
 - evaluation uses a single train-validation split;
 - there is no cross-validation;
-- model selection is still based only on the detected task;
 - all decisions are coordinated directly by one `agent()` function;
-- there is no planner or multi-agent architecture yet.
+- there is no planner or multi-agent architecture yet;
+- the best fitted pipeline is not yet persisted as a reusable artifact.
 
 These limitations are intentional.
 
-Version 3 focuses specifically on preprocessing experimentation. Model comparison, stronger validation and optimization remain separate concepts for later versions.
+Version 4 focuses specifically on model selection. Smarter validation, feature engineering and hyperparameter optimization remain separate concepts for later versions.
 
 ## Project status
 
@@ -1078,17 +1291,21 @@ Version 3 focuses specifically on preprocessing experimentation. Model compariso
 
 **Version 3 - Preprocessing Agent is completed.**
 
-The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer and its first preprocessing experiment loop.
+**Version 4 - Model Selection is completed.**
 
-The agent can move automatically from a tabular dataset and target column to an evaluated LightGBM baseline while adapting between classification and regression.
+The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer, preprocessing experimentation and automatic model comparison.
+
+The agent can move automatically from a tabular dataset and target column to evaluated experiments while adapting between classification and regression.
 
 Before training, it can inspect dataset dimensions, target behavior, feature types, missing values and feature cardinality.
 
-It can now also compare native missing-value handling with simple imputation, learn preprocessing parameters only from training data, evaluate both strategies under the same validation protocol, store the experiments and return the best preprocessing result.
+It can compare native missing-value handling with simple imputation and evaluate LightGBM, XGBoost and CatBoost under the same validation protocol.
 
-The project is intentionally not considered complete at Version 3.
+It stores every preprocessing-model experiment and returns the best preprocessing strategy, best model and best score.
 
-Future versions can progressively add model selection, smarter validation, feature engineering, hyperparameter optimization and more advanced agentic orchestration while preserving the educational structure of the project.
+The project is intentionally not considered complete at Version 4.
+
+Future versions can progressively add smarter validation, feature engineering, hyperparameter optimization and more advanced agentic orchestration while preserving the educational structure of the project.
 
 ## License
 
