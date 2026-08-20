@@ -76,9 +76,18 @@ Version 6 adds **Feature Engineering** while keeping preprocessing, models, metr
 5. evaluate every preprocessing-feature engineering-model combination across 5 folds;
 6. return `best_feature_engineering` together with the previously selected experiment information.
 
+Version 7 adds **Hyperparameter Optimization** while keeping preprocessing, feature engineering, models, metrics and validation unchanged:
+
+1. define a small model-specific hyperparameter search space;
+2. preserve the original Version 6 configuration as a baseline for every model;
+3. compare one additional configuration for LightGBM, XGBoost and CatBoost;
+4. evaluate every preprocessing-feature engineering-model-hyperparameter combination across 5 folds;
+5. store the hyperparameters together with fold scores, mean score and standard deviation;
+6. return `best_params` together with the best preprocessing, feature engineering strategy, model and validation results.
+
 Each version preserves the previous workflow as much as possible so that the effect of the new capability can be studied in isolation.
 
-Future versions will progressively introduce hyperparameter optimization and more advanced agentic components.
+Future versions will progressively introduce more advanced agentic decision-making and orchestration.
 
 ## Repository
 
@@ -112,21 +121,25 @@ The current agent can:
 - generate pairwise numerical interaction features with `interactions`;
 - apply feature engineering independently inside each validation fold after preprocessing;
 - build LightGBM, XGBoost and CatBoost candidates according to the detected task;
+- compare multiple hyperparameter configurations for each model;
+- preserve the original model configuration as an HPO baseline;
+- store the hyperparameter configuration tested in every experiment;
 - select an evaluation metric automatically;
 - select a validation strategy automatically;
 - use `StratifiedKFold` for classification and `KFold` for regression;
-- evaluate every preprocessing-feature engineering-model combination across 5 folds;
+- evaluate every preprocessing-feature engineering-model-hyperparameter combination across 5 folds;
 - store fold scores, mean score and standard deviation for every experiment;
 - compare experiment results using the appropriate metric direction;
-- select the best preprocessing-feature engineering-model combination using the mean validation score;
+- select the best experiment using the mean validation score;
 - adapt automatically between classification and regression;
-- return the complete result, dataset inspection, experiments, selected validation strategy, selected preprocessing strategy, selected feature engineering strategy, selected model, best score and score variability as a structured state.
+- return the complete result, dataset inspection, experiments, selected validation strategy, selected preprocessing strategy, selected feature engineering strategy, selected model, selected hyperparameters, best score and score variability as a structured state.
 
 For classification:
 
 ```text
 Models              → LightGBM / XGBoost / CatBoost
 Feature engineering → none / interactions
+Hyperparameters     → baseline / alternative configuration
 Validation          → StratifiedKFold (5 folds)
 Metric              → ROC AUC
 Best                → highest mean score
@@ -137,6 +150,7 @@ For regression:
 ```text
 Models              → LightGBM / XGBoost / CatBoost
 Feature engineering → none / interactions
+Hyperparameters     → baseline / alternative configuration
 Validation          → KFold (5 folds)
 Metric              → RMSE
 Best                → lowest mean score
@@ -164,12 +178,17 @@ Try Feature Engineering Strategies
  Build Model Candidates
 LightGBM / XGBoost / CatBoost
        ↓
+Try Hyperparameter Configurations
+ baseline / alternative
+       ↓
  Select Validation Strategy
  StratifiedKFold / KFold
        ↓
 Preprocess Inside Each Fold
        ↓
 Engineer Features Inside Each Fold
+       ↓
+Create Fresh Model with Parameters
        ↓
  Train + Evaluate
  every fold, every combination
@@ -186,18 +205,32 @@ The current architecture remains intentionally compact.
 
 The `agent()` function still coordinates the complete workflow.
 
-It loads the dataset, detects the task and feature types, runs the Data Inspector introduced in Version 2, keeps the preprocessing experiment logic introduced in Version 3, preserves the model-selection layer introduced in Version 4, and uses the smart-validation layer introduced in Version 5.
+It loads the dataset, detects the task and feature types, runs the Data Inspector introduced in Version 2, keeps the preprocessing experiment logic introduced in Version 3, preserves the model-selection layer introduced in Version 4, uses the smart-validation layer introduced in Version 5, and retains the feature-engineering layer introduced in Version 6.
 
-Version 6 adds a feature-engineering layer. For every preprocessing strategy, feature engineering strategy and candidate model, the agent evaluates the experiment across multiple folds.
+Version 7 adds a controlled hyperparameter-optimization layer.
 
-Two feature engineering strategies are currently available:
+For every preprocessing strategy, feature engineering strategy and candidate model, the agent evaluates two hyperparameter configurations:
 
 ```text
-none         → preserve the original feature space
-interactions → add pairwise products between numerical features
+baseline    → original Version 6 model configuration
+alternative → one predefined model-specific configuration
 ```
 
-Feature engineering is applied after preprocessing inside each validation fold. The original features are always preserved.
+The current search spaces are:
+
+```text
+LightGBM
+baseline    → {}
+alternative → n_estimators=200, learning_rate=0.05, num_leaves=31
+
+XGBoost
+baseline    → {}
+alternative → n_estimators=200, learning_rate=0.05, max_depth=4
+
+CatBoost
+baseline    → {}
+alternative → iterations=500, learning_rate=0.05, depth=6
+```
 
 Validation remains task-aware:
 
@@ -208,14 +241,35 @@ regression     → KFold
 
 Both strategies use 5 folds, `shuffle=True` and `random_state=42`.
 
-Two preprocessing strategies remain available:
+Preprocessing and feature engineering remain isolated inside each fold. A fresh model instance is then created using the hyperparameter configuration being evaluated.
+
+The experiment grid is now:
 
 ```text
-native → preserve missing values whenever supported by the selected model
-impute → numerical median + categorical most frequent value
+2 preprocessing
+× 2 feature engineering
+× 3 models
+× 2 hyperparameter configurations
+= 24 experiments
 ```
 
-Preprocessing parameters are learned only from the training subset inside each fold. Every fold receives a fresh model instance, and each experiment stores `fold_scores`, `mean_score` and `std_score`.
+Each experiment is evaluated across 5 folds:
+
+```text
+24 experiments × 5 folds = 120 model fits per dataset
+```
+
+Every experiment stores:
+
+```text
+preprocessing
+feature_engineering
+model
+hyperparameters
+fold_scores
+mean_score
+std_score
+```
 
 A typical classification state from the Adult Income dataset now looks like:
 
@@ -229,26 +283,40 @@ A typical classification state from the Adult Income dataset now looks like:
     "validation": "StratifiedKFold",
     "n_splits": 5,
     "experiments": [
-        {"preprocessing": "native", "feature_engineering": "none", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.929556, "std_score": 0.002508},
-        {"preprocessing": "native", "feature_engineering": "none", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.926851, "std_score": 0.002227},
-        {"preprocessing": "native", "feature_engineering": "none", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.930631, "std_score": 0.002246},
-        {"preprocessing": "native", "feature_engineering": "interactions", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.928578, "std_score": 0.002922},
-        {"preprocessing": "native", "feature_engineering": "interactions", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.925359, "std_score": 0.002862},
-        {"preprocessing": "native", "feature_engineering": "interactions", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.929786, "std_score": 0.002187},
-        {"preprocessing": "impute", "feature_engineering": "none", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.929217, "std_score": 0.002713},
-        {"preprocessing": "impute", "feature_engineering": "none", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.926435, "std_score": 0.002643},
-        {"preprocessing": "impute", "feature_engineering": "none", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.930119, "std_score": 0.002428},
-        {"preprocessing": "impute", "feature_engineering": "interactions", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.928319, "std_score": 0.002660},
-        {"preprocessing": "impute", "feature_engineering": "interactions", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.925207, "std_score": 0.002604},
-        {"preprocessing": "impute", "feature_engineering": "interactions", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.929030, "std_score": 0.002533}
+        {
+            "preprocessing": "native",
+            "feature_engineering": "none",
+            "model": "CatBoost",
+            "hyperparameters": {},
+            "fold_scores": [...],
+            "mean_score": 0.930630626301291,
+            "std_score": 0.002246310473216
+        },
+        {
+            "preprocessing": "native",
+            "feature_engineering": "none",
+            "model": "CatBoost",
+            "hyperparameters": {
+                "iterations": 500,
+                "learning_rate": 0.05,
+                "depth": 6
+            },
+            "fold_scores": [...],
+            "mean_score": 0.9299103499067497,
+            "std_score": 0.002476258487812128
+        },
+        ...
     ],
     "best_preprocessing": "native",
     "best_feature_engineering": "none",
     "best_model": "CatBoost",
+    "best_params": {},
     "best_score": 0.930630626301291,
     "best_std": 0.002246310473216
 }
 ```
+
+On classification, the original CatBoost configuration remains the best experiment.
 
 The same agent can also receive a regression dataset without changing its overall workflow. On `simple_regression.csv`, the best experiment is:
 
@@ -257,12 +325,13 @@ validation               = KFold
 best_preprocessing       = impute
 best_feature_engineering = none
 best_model               = CatBoost
-best_score               = 1.6283421164
-best_std                 = 0.1019398476
+best_params              = iterations=500, learning_rate=0.05, depth=6
+best_score               = 1.6078463494
+best_std                 = 0.1001204396
 metric                   = RMSE
 ```
 
-Version 6 therefore adds the first explicit **feature-engineering layer** while preserving the preprocessing, model-selection and smart-validation logic established in the previous versions.
+Version 7 therefore adds the first explicit **hyperparameter-optimization layer** while preserving all previous architectural decisions.
 
 ## Project versions
 
@@ -274,6 +343,7 @@ Version 6 therefore adds the first explicit **feature-engineering layer** while 
 | Version 4 | Model Selection | Completed | [`v04-model-selection`](v04-model-selection/) |
 | Version 5 | Smart Validation | Completed | [`v05-smart-validation`](v05-smart-validation/) |
 | Version 6 | Feature Engineering | Completed | [`v06-feature-engineering`](v06-feature-engineering/) |
+| Version 7 | Hyperparameter Optimization | Completed | [`v07-hyperparameter-optimization`](v07-hyperparameter-optimization/) |
 
 ## Version 1 - Baseline Agent
 
@@ -1584,6 +1654,323 @@ Open the folder:
 
 [`v06-feature-engineering`](v06-feature-engineering/)
 
+## Version 7 - Hyperparameter Optimization
+
+Version 7 introduces the next capability on top of feature engineering: **automatic comparison of hyperparameter configurations**.
+
+The complete flow becomes:
+
+```text
+Dataset + Target
+       ↓
+   Detect Task
+       ↓
+  Detect Features
+       ↓
+  Inspect Dataset
+       ↓
+    Prepare X / y
+       ↓
+Try Preprocessing
+ native / impute
+       ↓
+Try Feature Engineering
+ none / interactions
+       ↓
+ Build Candidate Models
+LightGBM / XGBoost / CatBoost
+       ↓
+Try Hyperparameters
+ baseline / alternative
+       ↓
+ Select Validation
+StratifiedKFold / KFold
+       ↓
+ Train + Evaluate
+ every fold, every combination
+       ↓
+ Compare Experiments
+ mean score + std
+       ↓
+ Select Best
+       ↓
+ State + Experiments
+```
+
+The objective is to let the agent compare model configurations while keeping task detection, data inspection, preprocessing, feature engineering, model families, metrics and validation unchanged.
+
+The main classification example continues to use the **Adult Income** dataset so that hyperparameter optimization is the only new concept introduced in this version.
+
+### Hyperparameter search spaces
+
+Version 7 uses a deliberately small and explicit search space.
+
+Each model keeps its original Version 6 configuration as a baseline and compares it with one alternative configuration:
+
+```python
+HYPERPARAMETER_SEARCH_SPACES = {
+    "LightGBM": [
+        {},
+        {
+            "n_estimators": 200,
+            "learning_rate": 0.05,
+            "num_leaves": 31
+        }
+    ],
+    "XGBoost": [
+        {},
+        {
+            "n_estimators": 200,
+            "learning_rate": 0.05,
+            "max_depth": 4
+        }
+    ],
+    "CatBoost": [
+        {},
+        {
+            "iterations": 500,
+            "learning_rate": 0.05,
+            "depth": 6
+        }
+    ]
+}
+```
+
+The search is intentionally compact.
+
+Version 7 does not introduce random search, Bayesian optimization, Optuna, early stopping or a larger tuning framework. Those additions would represent separate architectural concepts.
+
+### Parameter-aware model construction
+
+The model factory now accepts model-specific parameters:
+
+```python
+def select_models(task, categorical_features, model_params=None):
+    model_params = model_params or {}
+
+    lightgbm_params = model_params.get("LightGBM", {})
+    xgboost_params = model_params.get("XGBoost", {})
+    catboost_params = model_params.get("CatBoost", {})
+
+    ...
+```
+
+Only the parameters belonging to the model currently being evaluated are applied.
+
+Inside each validation fold, a fresh model instance is created using the selected configuration:
+
+```python
+fold_model = select_models(
+    task,
+    categorical_features,
+    {
+        model_name: model_params
+    }
+)[model_name]
+```
+
+This preserves the fold-isolated training logic introduced in Version 5.
+
+### Hyperparameter experiments
+
+The experiment grid now includes a fourth decision dimension:
+
+```python
+experiments = []
+
+for preprocessing in PREPROCESSING_STRATEGIES:
+    for feature_engineering in FEATURE_ENGINEERING_STRATEGIES:
+        for model_name in models:
+            for model_params in HYPERPARAMETER_SEARCH_SPACES[model_name]:
+                result = train_and_evaluate(
+                    X,
+                    y,
+                    model_name,
+                    task,
+                    numerical_features,
+                    categorical_features,
+                    preprocessing,
+                    feature_engineering,
+                    model_params,
+                    validation
+                )
+
+                experiments.append({
+                    "preprocessing": preprocessing,
+                    "feature_engineering": feature_engineering,
+                    "model": model_name,
+                    "hyperparameters": model_params,
+                    "fold_scores": result["fold_scores"],
+                    "mean_score": result["mean_score"],
+                    "std_score": result["std_score"]
+                })
+```
+
+The full grid becomes:
+
+```text
+preprocessing
+× feature engineering
+× model
+× hyperparameter configuration
+× folds
+```
+
+With 2 preprocessing strategies, 2 feature engineering strategies, 3 models, 2 hyperparameter configurations and 5 folds:
+
+```text
+2 × 2 × 3 × 2 = 24 experiments
+24 × 5 = 120 model fits per dataset
+```
+
+### Best experiment selection
+
+The selection rule remains unchanged from Version 5 and Version 6:
+
+```python
+def select_best_experiment(experiments, metric):
+    if metric == "rmse":
+        return min(experiments, key=lambda experiment: experiment["mean_score"])
+
+    return max(experiments, key=lambda experiment: experiment["mean_score"])
+```
+
+Therefore:
+
+```text
+ROC AUC → maximize mean_score
+RMSE    → minimize mean_score
+```
+
+The selected state now also exposes:
+
+```python
+"best_params": best_experiment["hyperparameters"]
+```
+
+### Agent
+
+Version 7 extends the existing `agent()` experiment loop with hyperparameter configurations while preserving the previous decision logic:
+
+```python
+for preprocessing in PREPROCESSING_STRATEGIES:
+    for feature_engineering in FEATURE_ENGINEERING_STRATEGIES:
+        for model_name in models:
+            for model_params in HYPERPARAMETER_SEARCH_SPACES[model_name]:
+                result = train_and_evaluate(
+                    X,
+                    y,
+                    model_name,
+                    task,
+                    numerical,
+                    categorical,
+                    preprocessing,
+                    feature_engineering,
+                    model_params,
+                    validation
+                )
+```
+
+The final state includes:
+
+```text
+task
+features
+inspection
+metric
+validation
+experiments
+best_preprocessing
+best_feature_engineering
+best_model
+best_params
+best_score
+best_std
+```
+
+### Classification result
+
+On Adult Income, Version 7 selects:
+
+```text
+validation               = StratifiedKFold
+best_preprocessing       = native
+best_feature_engineering = none
+best_model               = CatBoost
+best_params              = {}
+best_score               = 0.930630626301291
+best_std                 = 0.002246310473216
+metric                   = ROC AUC
+```
+
+The baseline CatBoost configuration remains the best classification experiment.
+
+This is a valid HPO result: optimization does not guarantee that an alternative parameter configuration will outperform the original configuration.
+
+For example, with `native + none + CatBoost`:
+
+```text
+baseline
+mean ROC AUC = 0.9306306263
+std          = 0.0022463105
+
+alternative
+iterations   = 500
+learning_rate= 0.05
+depth        = 6
+mean ROC AUC = 0.9299103499
+std          = 0.0024762585
+```
+
+The agent therefore correctly keeps the baseline configuration.
+
+### Regression test
+
+On `simple_regression.csv`, Version 7 selects:
+
+```text
+validation               = KFold
+best_preprocessing       = impute
+best_feature_engineering = none
+best_model               = CatBoost
+best_params              = {"iterations": 500, "learning_rate": 0.05, "depth": 6}
+best_score               = 1.6078463494
+best_std                 = 0.1001204396
+metric                   = RMSE
+```
+
+Version 6 previously obtained:
+
+```text
+CatBoost + impute + none
+mean RMSE = 1.6283421164
+```
+
+Version 7 improves this to:
+
+```text
+CatBoost + impute + none
+iterations    = 500
+learning_rate = 0.05
+depth         = 6
+mean RMSE     = 1.6078463494
+```
+
+The absolute RMSE reduction is approximately `0.02050`, corresponding to about `1.26%`.
+
+This demonstrates both possible HPO outcomes in the same version:
+
+```text
+classification → baseline parameters remain best
+regression     → alternative parameters improve the result
+```
+
+Version 7 therefore adds an explicit **hyperparameter-optimization layer** while keeping task detection, inspection, preprocessing, feature engineering, model families, metrics and smart validation unchanged.
+
+Open the folder:
+
+[`v07-hyperparameter-optimization`](v07-hyperparameter-optimization/)
+
 ## Component responsibilities
 
 | Component | Responsibility |
@@ -1594,13 +1981,14 @@ Open the folder:
 | `prepare_data()` | Separates input features `X` from target `y` |
 | `preprocess_data()` | Applies the selected preprocessing strategy using parameters learned from training data or training folds |
 | `apply_feature_engineering()` | Preserves the original feature space or adds pairwise numerical interaction features |
-| `select_models()` | Builds LightGBM, XGBoost and CatBoost candidates for the detected task |
+| `HYPERPARAMETER_SEARCH_SPACES` | Stores the baseline and alternative hyperparameter configurations for each model |
+| `select_models()` | Builds LightGBM, XGBoost and CatBoost candidates and applies model-specific hyperparameters |
 | `select_metric()` | Selects the evaluation metric |
 | `select_validation()` | Selects the validation strategy according to the task |
-| `train_and_evaluate()` | Applies preprocessing and feature engineering inside each fold, trains fresh model instances and returns fold scores, mean and standard deviation |
-| `select_best_experiment()` | Selects the best preprocessing-feature engineering-model experiment according to the metric direction and mean score |
+| `train_and_evaluate()` | Applies preprocessing and feature engineering inside each fold, creates a fresh parameterized model instance and returns fold scores, mean and standard deviation |
+| `select_best_experiment()` | Selects the best preprocessing-feature engineering-model-hyperparameter experiment according to the metric direction and mean score |
 | `agent()` | Coordinates the complete AutoML workflow and cross-validated experiment grid |
-| State | Stores task, features, inspection, metric, validation, experiments, selected preprocessing, selected feature engineering strategy, selected model, best score and best standard deviation |
+| State | Stores task, features, inspection, metric, validation, experiments, selected preprocessing, selected feature engineering strategy, selected model, selected hyperparameters, best score and best standard deviation |
 
 ## Documentation
 
@@ -1653,6 +2041,13 @@ For Version 6:
 - [`Report Version 6 - Feature Engineering.pdf`](v06-feature-engineering/Report%20Version%206%20-%20Feature%20Engineering.pdf)
 - [`Version 6.png`](v06-feature-engineering/Version%206.png)
 
+For Version 7:
+
+- [`building-agentic-automl.ipynb`](v07-hyperparameter-optimization/building-agentic-automl.ipynb)
+- [`Relazione Versione 7 - Hyperparameter Optimization.pdf`](v07-hyperparameter-optimization/Relazione%20Versione%207%20-%20Hyperparameter%20Optimization.pdf)
+- [`Report Version 7 - Hyperparameter Optimization.pdf`](v07-hyperparameter-optimization/Report%20Version%207%20-%20Hyperparameter%20Optimization.pdf)
+- [`Version 7.png`](v07-hyperparameter-optimization/Version%207.png)
+
 ## Repository structure
 
 ```text
@@ -1692,6 +2087,12 @@ building-agentic-automl/
 │   ├── Relazione Versione 6 - Feature Engineering.pdf
 │   ├── Report Version 6 - Feature Engineering.pdf
 │   └── Version 6.png
+│
+├── v07-hyperparameter-optimization/
+│   ├── building-agentic-automl.ipynb
+│   ├── Relazione Versione 7 - Hyperparameter Optimization.pdf
+│   ├── Report Version 7 - Hyperparameter Optimization.pdf
+│   └── Version 7.png
 │
 ├── README.md
 ├── LICENSE
@@ -1870,7 +2271,31 @@ select
 return
 ```
 
-The state now records dataset information, alternative preprocessing-feature engineering-model experiments, the selected validation strategy, the selected preprocessing strategy, the selected feature engineering strategy, the selected model, the best score and the score variability.
+Version 7 extends the experiment loop to hyperparameter optimization:
+
+```text
+observe
+   ↓
+inspect
+   ↓
+try preprocessing
+   ↓
+try feature engineering
+   ↓
+try models
+   ↓
+try hyperparameters
+   ↓
+validate across folds
+   ↓
+compare
+   ↓
+select
+   ↓
+return
+```
+
+The state now records dataset information, alternative preprocessing-feature engineering-model-hyperparameter experiments, the selected validation strategy, the selected preprocessing strategy, the selected feature engineering strategy, the selected model, the selected hyperparameters, the best score and the score variability.
 
 Each completed version remains available as an independent learning resource.
 
@@ -1882,7 +2307,7 @@ Each completed version remains available as an independent learning resource.
 - [x] Version 4 - Model Selection
 - [x] Version 5 - Smart Validation
 - [x] Version 6 - Feature Engineering
-- [ ] Version 7 - Hyperparameter Optimization
+- [x] Version 7 - Hyperparameter Optimization
 - [ ] Version 8 - Senior Agent
 
 The exact architecture of future versions can evolve as new concepts are introduced.
@@ -1893,32 +2318,35 @@ The guiding rule remains:
 
 ## Current limitations
 
-Version 6 is intentionally compact and educational:
+Version 7 is intentionally compact and educational:
 
 - task detection still relies only on the number of unique target values;
-- the Data Inspector remains descriptive and does not decide which preprocessing, feature engineering strategies or models should be tried;
+- the Data Inspector remains descriptive and does not decide which preprocessing, feature engineering, models or hyperparameter spaces should be tried;
 - only two preprocessing strategies are compared: native missing-value handling and simple imputation;
 - numerical imputation uses only the median;
 - categorical imputation uses only the most frequent value;
 - there is no scaling or comparison of encoding strategies;
 - there is no dedicated outlier detection or treatment;
-- there is no explicit data-leakage detection beyond fitting transformations only inside training folds;
 - duplicate rows, skewness and semantic feature types are not inspected yet;
 - feature engineering is limited to pairwise multiplication between numerical features;
 - there are no ratio, logarithmic, polynomial, datetime or categorical interaction strategies;
 - the number of interaction features grows quadratically with the number of numerical features;
 - there is no feature selection after feature generation;
 - model comparison is limited to LightGBM, XGBoost and CatBoost;
-- hyperparameters remain fixed at default or near-default values;
+- hyperparameter optimization uses only two predefined configurations per model;
+- hyperparameter search spaces are manually defined and intentionally small;
+- there is no random search, Bayesian optimization, Optuna or adaptive search strategy;
+- there is no early stopping or resource-aware tuning logic;
 - cross-validation is fixed to 5 folds;
-- there is no group-aware, time-series-aware or nested validation logic;
+- there is no group-aware or time-series-aware validation logic;
+- there is no nested cross-validation or separate final holdout for an unbiased post-selection performance estimate;
 - all decisions are coordinated directly by one `agent()` function;
 - there is no planner or multi-agent architecture yet;
 - the best fitted pipeline is not yet persisted as a reusable artifact.
 
 These limitations are intentional.
 
-Version 6 focuses specifically on feature engineering. Hyperparameter optimization and more advanced agentic orchestration remain separate concepts for later versions.
+Version 7 focuses specifically on hyperparameter optimization. More advanced agentic decision-making and orchestration remain separate concepts for Version 8.
 
 ## Project status
 
@@ -1934,19 +2362,25 @@ Version 6 focuses specifically on feature engineering. Hyperparameter optimizati
 
 **Version 6 - Feature Engineering is completed.**
 
-The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer, preprocessing experimentation, automatic model comparison, task-aware cross-validation and automatic numerical feature engineering.
+**Version 7 - Hyperparameter Optimization is completed.**
+
+The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer, preprocessing experimentation, automatic model comparison, task-aware cross-validation, automatic numerical feature engineering and controlled hyperparameter optimization.
 
 The agent can move automatically from a tabular dataset and target column to cross-validated experiments while adapting between classification and regression.
 
 Before training, it can inspect dataset dimensions, target behavior, feature types, missing values and feature cardinality.
 
-It can compare native missing-value handling with simple imputation, compare the original feature space with pairwise numerical interactions, evaluate LightGBM, XGBoost and CatBoost, and validate every preprocessing-feature engineering-model combination across multiple folds.
+It can compare native missing-value handling with simple imputation, compare the original feature space with pairwise numerical interactions, evaluate LightGBM, XGBoost and CatBoost, compare multiple hyperparameter configurations and validate every complete experiment across multiple folds.
 
-It stores every experiment together with fold scores, mean score and standard deviation, and returns the best preprocessing strategy, best feature engineering strategy, validation strategy, best model, best score and best standard deviation.
+For classification, Version 7 keeps the original CatBoost configuration as the best experiment with mean ROC AUC `0.9306306263`.
 
-The project is intentionally not considered complete at Version 6.
+For regression, Version 7 selects CatBoost with `iterations=500`, `learning_rate=0.05` and `depth=6`, improving mean RMSE from `1.6283421164` in Version 6 to `1.6078463494`.
 
-Future versions can progressively add hyperparameter optimization and more advanced agentic orchestration while preserving the educational structure of the project.
+The state stores every experiment together with hyperparameters, fold scores, mean score and standard deviation, and returns the best preprocessing strategy, best feature engineering strategy, validation strategy, best model, best hyperparameters, best score and best standard deviation.
+
+The project is intentionally not considered complete at Version 7.
+
+Version 8 can focus on more advanced agentic decision-making while preserving the progressive educational structure of the project.
 
 ## License
 
