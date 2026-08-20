@@ -67,9 +67,18 @@ Version 5 adds **Smart Validation** while keeping preprocessing, model candidate
 5. select the best experiment using the mean validation score;
 6. return the selected validation strategy together with `best_preprocessing`, `best_model`, `best_score` and `best_std`.
 
+Version 6 adds **Feature Engineering** while keeping preprocessing, models, metrics, validation and hyperparameter configurations unchanged:
+
+1. compare the original feature space with an engineered feature space;
+2. use `none` to preserve the original features;
+3. use `interactions` to add pairwise multiplication features between numerical variables;
+4. apply feature engineering inside each validation fold after preprocessing;
+5. evaluate every preprocessing-feature engineering-model combination across 5 folds;
+6. return `best_feature_engineering` together with the previously selected experiment information.
+
 Each version preserves the previous workflow as much as possible so that the effect of the new capability can be studied in isolation.
 
-Future versions will progressively introduce feature engineering, hyperparameter optimization and more advanced agentic components.
+Future versions will progressively introduce hyperparameter optimization and more advanced agentic components.
 
 ## Repository
 
@@ -98,33 +107,39 @@ The current agent can:
 - impute missing categorical values with the most frequent training value;
 - learn preprocessing parameters only from the training data or training fold;
 - align categorical vocabularies between training and validation data;
+- compare multiple feature engineering strategies;
+- preserve the original feature space with `none`;
+- generate pairwise numerical interaction features with `interactions`;
+- apply feature engineering independently inside each validation fold after preprocessing;
 - build LightGBM, XGBoost and CatBoost candidates according to the detected task;
 - select an evaluation metric automatically;
 - select a validation strategy automatically;
 - use `StratifiedKFold` for classification and `KFold` for regression;
-- evaluate every preprocessing-model combination across 5 folds;
+- evaluate every preprocessing-feature engineering-model combination across 5 folds;
 - store fold scores, mean score and standard deviation for every experiment;
 - compare experiment results using the appropriate metric direction;
-- select the best preprocessing-model combination using the mean validation score;
+- select the best preprocessing-feature engineering-model combination using the mean validation score;
 - adapt automatically between classification and regression;
-- return the complete result, dataset inspection, experiments, selected validation strategy, selected preprocessing strategy, selected model, best score and score variability as a structured state.
+- return the complete result, dataset inspection, experiments, selected validation strategy, selected preprocessing strategy, selected feature engineering strategy, selected model, best score and score variability as a structured state.
 
 For classification:
 
 ```text
-Models     → LightGBM / XGBoost / CatBoost
-Validation → StratifiedKFold (5 folds)
-Metric     → ROC AUC
-Best       → highest mean score
+Models              → LightGBM / XGBoost / CatBoost
+Feature engineering → none / interactions
+Validation          → StratifiedKFold (5 folds)
+Metric              → ROC AUC
+Best                → highest mean score
 ```
 
 For regression:
 
 ```text
-Models     → LightGBM / XGBoost / CatBoost
-Validation → KFold (5 folds)
-Metric     → RMSE
-Best       → lowest mean score
+Models              → LightGBM / XGBoost / CatBoost
+Feature engineering → none / interactions
+Validation          → KFold (5 folds)
+Metric              → RMSE
+Best                → lowest mean score
 ```
 
 ## Current architecture
@@ -143,6 +158,9 @@ Dataset + Target
 Try Preprocessing Strategies
   native / impute
        ↓
+Try Feature Engineering Strategies
+  none / interactions
+       ↓
  Build Model Candidates
 LightGBM / XGBoost / CatBoost
        ↓
@@ -150,6 +168,8 @@ LightGBM / XGBoost / CatBoost
  StratifiedKFold / KFold
        ↓
 Preprocess Inside Each Fold
+       ↓
+Engineer Features Inside Each Fold
        ↓
  Train + Evaluate
  every fold, every combination
@@ -166,11 +186,20 @@ The current architecture remains intentionally compact.
 
 The `agent()` function still coordinates the complete workflow.
 
-It loads the dataset, detects the task and feature types, runs the Data Inspector introduced in Version 2, keeps the preprocessing experiment logic introduced in Version 3, and preserves the model-selection layer introduced in Version 4.
+It loads the dataset, detects the task and feature types, runs the Data Inspector introduced in Version 2, keeps the preprocessing experiment logic introduced in Version 3, preserves the model-selection layer introduced in Version 4, and uses the smart-validation layer introduced in Version 5.
 
-Version 5 adds a smart-validation layer. For each preprocessing strategy and candidate model, the agent evaluates the experiment across multiple folds instead of relying on a single train-validation split.
+Version 6 adds a feature-engineering layer. For every preprocessing strategy, feature engineering strategy and candidate model, the agent evaluates the experiment across multiple folds.
 
-Validation is now task-aware:
+Two feature engineering strategies are currently available:
+
+```text
+none         → preserve the original feature space
+interactions → add pairwise products between numerical features
+```
+
+Feature engineering is applied after preprocessing inside each validation fold. The original features are always preserved.
+
+Validation remains task-aware:
 
 ```text
 classification → StratifiedKFold
@@ -200,14 +229,21 @@ A typical classification state from the Adult Income dataset now looks like:
     "validation": "StratifiedKFold",
     "n_splits": 5,
     "experiments": [
-        {"preprocessing": "native", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.929556, "std_score": 0.002508},
-        {"preprocessing": "native", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.926851, "std_score": 0.002227},
-        {"preprocessing": "native", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.930631, "std_score": 0.002246},
-        {"preprocessing": "impute", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.929217, "std_score": 0.002713},
-        {"preprocessing": "impute", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.926435, "std_score": 0.002643},
-        {"preprocessing": "impute", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.930119, "std_score": 0.002428}
+        {"preprocessing": "native", "feature_engineering": "none", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.929556, "std_score": 0.002508},
+        {"preprocessing": "native", "feature_engineering": "none", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.926851, "std_score": 0.002227},
+        {"preprocessing": "native", "feature_engineering": "none", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.930631, "std_score": 0.002246},
+        {"preprocessing": "native", "feature_engineering": "interactions", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.928578, "std_score": 0.002922},
+        {"preprocessing": "native", "feature_engineering": "interactions", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.925359, "std_score": 0.002862},
+        {"preprocessing": "native", "feature_engineering": "interactions", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.929786, "std_score": 0.002187},
+        {"preprocessing": "impute", "feature_engineering": "none", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.929217, "std_score": 0.002713},
+        {"preprocessing": "impute", "feature_engineering": "none", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.926435, "std_score": 0.002643},
+        {"preprocessing": "impute", "feature_engineering": "none", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.930119, "std_score": 0.002428},
+        {"preprocessing": "impute", "feature_engineering": "interactions", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.928319, "std_score": 0.002660},
+        {"preprocessing": "impute", "feature_engineering": "interactions", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.925207, "std_score": 0.002604},
+        {"preprocessing": "impute", "feature_engineering": "interactions", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.929030, "std_score": 0.002533}
     ],
     "best_preprocessing": "native",
+    "best_feature_engineering": "none",
     "best_model": "CatBoost",
     "best_score": 0.930630626301291,
     "best_std": 0.002246310473216
@@ -217,15 +253,16 @@ A typical classification state from the Adult Income dataset now looks like:
 The same agent can also receive a regression dataset without changing its overall workflow. On `simple_regression.csv`, the best experiment is:
 
 ```text
-validation         = KFold
-best_preprocessing = impute
-best_model         = CatBoost
-best_score         = 1.6283421164
-best_std           = 0.1019398476
-metric             = RMSE
+validation               = KFold
+best_preprocessing       = impute
+best_feature_engineering = none
+best_model               = CatBoost
+best_score               = 1.6283421164
+best_std                 = 0.1019398476
+metric                   = RMSE
 ```
 
-Version 5 therefore adds the first explicit **smart-validation layer** while preserving the preprocessing and model-selection logic established in the previous versions.
+Version 6 therefore adds the first explicit **feature-engineering layer** while preserving the preprocessing, model-selection and smart-validation logic established in the previous versions.
 
 ## Project versions
 
@@ -236,6 +273,7 @@ Version 5 therefore adds the first explicit **smart-validation layer** while pre
 | Version 3 | Preprocessing Agent | Completed | [`v03-preprocessing-agent`](v03-preprocessing-agent/) |
 | Version 4 | Model Selection | Completed | [`v04-model-selection`](v04-model-selection/) |
 | Version 5 | Smart Validation | Completed | [`v05-smart-validation`](v05-smart-validation/) |
+| Version 6 | Feature Engineering | Completed | [`v06-feature-engineering`](v06-feature-engineering/) |
 
 ## Version 1 - Baseline Agent
 
@@ -1264,6 +1302,288 @@ Open the folder:
 
 [`v05-smart-validation`](v05-smart-validation/)
 
+## Version 6 - Feature Engineering
+
+Version 6 introduces the next capability on top of smart validation: **automatic feature engineering**.
+
+The complete flow becomes:
+
+```text
+Dataset + Target
+       ↓
+   Detect Task
+       ↓
+  Detect Features
+       ↓
+  Inspect Dataset
+       ↓
+    Prepare X / y
+       ↓
+Try Preprocessing
+ native / impute
+       ↓
+Try Feature Engineering
+ none / interactions
+       ↓
+ Build Candidate Models
+LightGBM / XGBoost / CatBoost
+       ↓
+ Select Validation
+StratifiedKFold / KFold
+       ↓
+ Train + Evaluate
+ every fold, every combination
+       ↓
+ Compare Experiments
+ mean score + std
+       ↓
+ Select Best
+       ↓
+ State + Experiments
+```
+
+The objective is to let the agent compare alternative feature spaces while keeping preprocessing, model candidates, metrics, validation and hyperparameter configurations unchanged.
+
+The main classification example continues to use the **Adult Income** dataset so that feature engineering is the only new concept introduced in this version.
+
+### Feature engineering strategies
+
+Version 6 compares two strategies:
+
+```text
+none         → preserve the original feature space
+interactions → add pairwise multiplication features between numerical variables
+```
+
+The available strategies are defined explicitly:
+
+```python
+FEATURE_ENGINEERING_STRATEGIES = ["none", "interactions"]
+```
+
+Feature engineering is implemented in `apply_feature_engineering()`:
+
+```python
+def apply_feature_engineering(
+    X_train,
+    X_valid,
+    numerical_features,
+    strategy
+):
+    X_train = X_train.copy()
+    X_valid = X_valid.copy()
+
+    if strategy == "interactions":
+        for i in range(len(numerical_features)):
+            for j in range(i + 1, len(numerical_features)):
+                feature_a = numerical_features[i]
+                feature_b = numerical_features[j]
+
+                new_feature = f"{feature_a}_x_{feature_b}"
+
+                X_train[new_feature] = (
+                    X_train[feature_a] * X_train[feature_b]
+                )
+
+                X_valid[new_feature] = (
+                    X_valid[feature_a] * X_valid[feature_b]
+                )
+
+    return X_train, X_valid
+```
+
+The original features are always preserved. The `interactions` strategy only adds new numerical columns.
+
+### Fold-safe feature engineering
+
+Feature engineering is applied inside each validation fold after preprocessing:
+
+```text
+split fold
+   ↓
+preprocess training + validation
+   ↓
+apply feature engineering
+   ↓
+fit fresh model
+   ↓
+evaluate validation fold
+```
+
+This preserves the fold-isolated architecture introduced in Version 5.
+
+The current interaction transformation has no learned parameters, but keeping it inside each fold makes the pipeline consistent with future feature transformations that may require fitting.
+
+### Feature-engineering experiments
+
+Every preprocessing strategy is evaluated with every feature engineering strategy and every candidate model:
+
+```python
+experiments = []
+
+for preprocessing in PREPROCESSING_STRATEGIES:
+    for feature_engineering in FEATURE_ENGINEERING_STRATEGIES:
+        for model_name in models:
+            result = train_and_evaluate(
+                X,
+                y,
+                model_name,
+                task,
+                numerical_features,
+                categorical_features,
+                preprocessing,
+                feature_engineering,
+                validation
+            )
+
+            experiments.append({
+                "preprocessing": preprocessing,
+                "feature_engineering": feature_engineering,
+                "model": model_name,
+                "fold_scores": result["fold_scores"],
+                "mean_score": result["mean_score"],
+                "std_score": result["std_score"]
+            })
+```
+
+This expands the experiment grid to:
+
+```text
+preprocessing × feature engineering × model × folds
+→ fold_scores, mean_score, std_score
+```
+
+With 2 preprocessing strategies, 2 feature engineering strategies, 3 models and 5 folds, one dataset evaluation performs 60 model fits.
+
+### Best experiment selection
+
+The selection logic remains unchanged from Version 5:
+
+```python
+def select_best_experiment(experiments, metric):
+    if metric == "rmse":
+        return min(experiments, key=lambda experiment: experiment["mean_score"])
+
+    return max(experiments, key=lambda experiment: experiment["mean_score"])
+```
+
+Therefore:
+
+```text
+ROC AUC → maximize mean_score
+RMSE    → minimize mean_score
+```
+
+The selected experiment now also exposes:
+
+```python
+"best_feature_engineering": best_experiment["feature_engineering"]
+```
+
+### Agent
+
+Version 6 integrates feature engineering directly into the existing agent:
+
+```python
+def agent(data_path, target):
+    df = pd.read_csv(data_path)
+
+    task = detect_task(df, target)
+    numerical, categorical = detect_features(df, target)
+    inspection = inspect_dataset(df, target)
+    X, y = prepare_data(df, target)
+
+    metric = select_metric(task)
+    validation = select_validation(task)
+    models = select_models(task, categorical)
+
+    experiments = []
+
+    for preprocessing in PREPROCESSING_STRATEGIES:
+        for feature_engineering in FEATURE_ENGINEERING_STRATEGIES:
+            for model_name in models:
+                result = train_and_evaluate(
+                    X,
+                    y,
+                    model_name,
+                    task,
+                    numerical,
+                    categorical,
+                    preprocessing,
+                    feature_engineering,
+                    validation
+                )
+
+                experiments.append({
+                    "preprocessing": preprocessing,
+                    "feature_engineering": feature_engineering,
+                    "model": model_name,
+                    "fold_scores": result["fold_scores"],
+                    "mean_score": result["mean_score"],
+                    "std_score": result["std_score"]
+                })
+
+    best_experiment = select_best_experiment(experiments, metric)
+
+    return {
+        "task": task,
+        "numerical_features": numerical,
+        "categorical_features": categorical,
+        "inspection": inspection,
+        "metric": metric,
+        "validation": validation.__class__.__name__,
+        "n_splits": validation.n_splits,
+        "experiments": experiments,
+        "best_preprocessing": best_experiment["preprocessing"],
+        "best_feature_engineering": best_experiment["feature_engineering"],
+        "best_model": best_experiment["model"],
+        "best_score": best_experiment["mean_score"],
+        "best_std": best_experiment["std_score"]
+    }
+```
+
+### Classification result
+
+On Adult Income, Version 6 selects:
+
+```text
+validation               = StratifiedKFold
+best_preprocessing       = native
+best_feature_engineering = none
+best_model               = CatBoost
+best_score               = 0.930630626301291
+best_std                 = 0.002246310473216
+metric                   = ROC AUC
+```
+
+The best interaction-based classification experiment is `native + interactions + CatBoost`, with mean ROC AUC `0.9297864575`.
+
+The generated interactions therefore do not improve the best classification score in this version. This is a valid AutoML outcome: the agent evaluates the engineered feature space rather than assuming that it must be better.
+
+### Regression test
+
+On `simple_regression.csv`, Version 6 selects:
+
+```text
+validation               = KFold
+best_preprocessing       = impute
+best_feature_engineering = none
+best_model               = CatBoost
+best_score               = 1.6283421164
+best_std                 = 0.1019398476
+metric                   = RMSE
+```
+
+The best interaction-based regression experiment is `impute + interactions + CatBoost`, with mean RMSE `1.6816779756`.
+
+The original feature space therefore remains best on both current datasets.
+
+Version 6 adds an explicit **feature-engineering experimentation layer** while keeping task detection, inspection, preprocessing strategies, models, metrics, smart validation and hyperparameter configurations unchanged.
+
+Open the folder:
+
+[`v06-feature-engineering`](v06-feature-engineering/)
+
 ## Component responsibilities
 
 | Component | Responsibility |
@@ -1273,13 +1593,14 @@ Open the folder:
 | `inspect_dataset()` | Profiles shape, target, dtypes, missing values and feature cardinality |
 | `prepare_data()` | Separates input features `X` from target `y` |
 | `preprocess_data()` | Applies the selected preprocessing strategy using parameters learned from training data or training folds |
+| `apply_feature_engineering()` | Preserves the original feature space or adds pairwise numerical interaction features |
 | `select_models()` | Builds LightGBM, XGBoost and CatBoost candidates for the detected task |
 | `select_metric()` | Selects the evaluation metric |
 | `select_validation()` | Selects the validation strategy according to the task |
-| `train_and_evaluate()` | Applies preprocessing inside each fold, trains fresh model instances and returns fold scores, mean and standard deviation |
-| `select_best_experiment()` | Selects the best preprocessing-model experiment according to the metric direction and mean score |
+| `train_and_evaluate()` | Applies preprocessing and feature engineering inside each fold, trains fresh model instances and returns fold scores, mean and standard deviation |
+| `select_best_experiment()` | Selects the best preprocessing-feature engineering-model experiment according to the metric direction and mean score |
 | `agent()` | Coordinates the complete AutoML workflow and cross-validated experiment grid |
-| State | Stores task, features, inspection, metric, validation, experiments, selected preprocessing, selected model, best score and best standard deviation |
+| State | Stores task, features, inspection, metric, validation, experiments, selected preprocessing, selected feature engineering strategy, selected model, best score and best standard deviation |
 
 ## Documentation
 
@@ -1325,6 +1646,13 @@ For Version 5:
 - [`Report Version 5 - Smart Validation.pdf`](v05-smart-validation/Report%20Version%205%20-%20Smart%20Validation.pdf)
 - [`Version 5.png`](v05-smart-validation/Version%205.png)
 
+For Version 6:
+
+- [`building-agentic-automl.ipynb`](v06-feature-engineering/building-agentic-automl.ipynb)
+- [`Relazione Versione 6 - Feature Engineering.pdf`](v06-feature-engineering/Relazione%20Versione%206%20-%20Feature%20Engineering.pdf)
+- [`Report Version 6 - Feature Engineering.pdf`](v06-feature-engineering/Report%20Version%206%20-%20Feature%20Engineering.pdf)
+- [`Version 6.png`](v06-feature-engineering/Version%206.png)
+
 ## Repository structure
 
 ```text
@@ -1358,6 +1686,12 @@ building-agentic-automl/
 │   ├── Relazione Versione 5 - Smart Validation.pdf
 │   ├── Report Version 5 - Smart Validation.pdf
 │   └── Version 5.png
+│
+├── v06-feature-engineering/
+│   ├── building-agentic-automl.ipynb
+│   ├── Relazione Versione 6 - Feature Engineering.pdf
+│   ├── Report Version 6 - Feature Engineering.pdf
+│   └── Version 6.png
 │
 ├── README.md
 ├── LICENSE
@@ -1407,6 +1741,7 @@ v02-data-inspector/building-agentic-automl.ipynb
 v03-preprocessing-agent/building-agentic-automl.ipynb
 v04-model-selection/building-agentic-automl.ipynb
 v05-smart-validation/building-agentic-automl.ipynb
+v06-feature-engineering/building-agentic-automl.ipynb
 ```
 
 and run the cells in order.
@@ -1513,7 +1848,29 @@ select
 return
 ```
 
-The state now records dataset information, alternative preprocessing-model experiments, the selected validation strategy, the selected preprocessing strategy, the selected model, the best score and the score variability.
+Version 6 extends the experiment loop to feature engineering:
+
+```text
+observe
+   ↓
+inspect
+   ↓
+try preprocessing
+   ↓
+try feature engineering
+   ↓
+try models
+   ↓
+validate across folds
+   ↓
+compare
+   ↓
+select
+   ↓
+return
+```
+
+The state now records dataset information, alternative preprocessing-feature engineering-model experiments, the selected validation strategy, the selected preprocessing strategy, the selected feature engineering strategy, the selected model, the best score and the score variability.
 
 Each completed version remains available as an independent learning resource.
 
@@ -1524,7 +1881,7 @@ Each completed version remains available as an independent learning resource.
 - [x] Version 3 - Preprocessing Agent
 - [x] Version 4 - Model Selection
 - [x] Version 5 - Smart Validation
-- [ ] Version 6 - Feature Engineering
+- [x] Version 6 - Feature Engineering
 - [ ] Version 7 - Hyperparameter Optimization
 - [ ] Version 8 - Senior Agent
 
@@ -1536,17 +1893,21 @@ The guiding rule remains:
 
 ## Current limitations
 
-Version 5 is intentionally compact and educational:
+Version 6 is intentionally compact and educational:
 
 - task detection still relies only on the number of unique target values;
-- the Data Inspector remains descriptive and does not decide which preprocessing strategies or models should be tried;
+- the Data Inspector remains descriptive and does not decide which preprocessing, feature engineering strategies or models should be tried;
 - only two preprocessing strategies are compared: native missing-value handling and simple imputation;
 - numerical imputation uses only the median;
 - categorical imputation uses only the most frequent value;
 - there is no scaling or comparison of encoding strategies;
 - there is no dedicated outlier detection or treatment;
-- there is no explicit data-leakage detection beyond fitting preprocessing parameters only on training folds;
+- there is no explicit data-leakage detection beyond fitting transformations only inside training folds;
 - duplicate rows, skewness and semantic feature types are not inspected yet;
+- feature engineering is limited to pairwise multiplication between numerical features;
+- there are no ratio, logarithmic, polynomial, datetime or categorical interaction strategies;
+- the number of interaction features grows quadratically with the number of numerical features;
+- there is no feature selection after feature generation;
 - model comparison is limited to LightGBM, XGBoost and CatBoost;
 - hyperparameters remain fixed at default or near-default values;
 - cross-validation is fixed to 5 folds;
@@ -1557,7 +1918,7 @@ Version 5 is intentionally compact and educational:
 
 These limitations are intentional.
 
-Version 5 focuses specifically on smart validation. Feature engineering and hyperparameter optimization remain separate concepts for later versions.
+Version 6 focuses specifically on feature engineering. Hyperparameter optimization and more advanced agentic orchestration remain separate concepts for later versions.
 
 ## Project status
 
@@ -1571,19 +1932,21 @@ Version 5 focuses specifically on smart validation. Feature engineering and hype
 
 **Version 5 - Smart Validation is completed.**
 
-The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer, preprocessing experimentation, automatic model comparison and task-aware cross-validation.
+**Version 6 - Feature Engineering is completed.**
 
-The agent can move automatically from a tabular dataset and target column to evaluated experiments while adapting between classification and regression.
+The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer, preprocessing experimentation, automatic model comparison, task-aware cross-validation and automatic numerical feature engineering.
+
+The agent can move automatically from a tabular dataset and target column to cross-validated experiments while adapting between classification and regression.
 
 Before training, it can inspect dataset dimensions, target behavior, feature types, missing values and feature cardinality.
 
-It can compare native missing-value handling with simple imputation, evaluate LightGBM, XGBoost and CatBoost, and validate every preprocessing-model combination across multiple folds.
+It can compare native missing-value handling with simple imputation, compare the original feature space with pairwise numerical interactions, evaluate LightGBM, XGBoost and CatBoost, and validate every preprocessing-feature engineering-model combination across multiple folds.
 
-It stores every experiment together with fold scores, mean score and standard deviation, and returns the best preprocessing strategy, validation strategy, best model, best score and best standard deviation.
+It stores every experiment together with fold scores, mean score and standard deviation, and returns the best preprocessing strategy, best feature engineering strategy, validation strategy, best model, best score and best standard deviation.
 
-The project is intentionally not considered complete at Version 5.
+The project is intentionally not considered complete at Version 6.
 
-Future versions can progressively add feature engineering, hyperparameter optimization and more advanced agentic orchestration while preserving the educational structure of the project.
+Future versions can progressively add hyperparameter optimization and more advanced agentic orchestration while preserving the educational structure of the project.
 
 ## License
 
