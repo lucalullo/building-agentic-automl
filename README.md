@@ -58,9 +58,18 @@ Version 4 adds **Model Selection** while keeping preprocessing and validation un
 5. select the best preprocessing-model combination;
 6. store all experiments, the selected preprocessing strategy, model and score inside the agent state.
 
+Version 5 adds **Smart Validation** while keeping preprocessing, model candidates and hyperparameter configurations unchanged:
+
+1. replace the single train-validation split with task-aware cross-validation;
+2. use `StratifiedKFold` for classification and `KFold` for regression;
+3. evaluate every preprocessing-model combination across 5 folds;
+4. store fold scores, mean score and standard deviation for every experiment;
+5. select the best experiment using the mean validation score;
+6. return the selected validation strategy together with `best_preprocessing`, `best_model`, `best_score` and `best_std`.
+
 Each version preserves the previous workflow as much as possible so that the effect of the new capability can be studied in isolation.
 
-Future versions will progressively introduce smarter validation, feature engineering, hyperparameter optimization and more advanced agentic components.
+Future versions will progressively introduce feature engineering, hyperparameter optimization and more advanced agentic components.
 
 ## Repository
 
@@ -87,32 +96,35 @@ The current agent can:
 - preserve missing values whenever the selected model supports them directly;
 - impute missing numerical values with the training median;
 - impute missing categorical values with the most frequent training value;
-- learn preprocessing parameters only from the training data;
+- learn preprocessing parameters only from the training data or training fold;
 - align categorical vocabularies between training and validation data;
 - build LightGBM, XGBoost and CatBoost candidates according to the detected task;
 - select an evaluation metric automatically;
-- create a train-validation split;
-- preserve class proportions during classification through stratification;
-- train and evaluate every preprocessing-model experiment;
+- select a validation strategy automatically;
+- use `StratifiedKFold` for classification and `KFold` for regression;
+- evaluate every preprocessing-model combination across 5 folds;
+- store fold scores, mean score and standard deviation for every experiment;
 - compare experiment results using the appropriate metric direction;
-- select the best preprocessing-model combination;
+- select the best preprocessing-model combination using the mean validation score;
 - adapt automatically between classification and regression;
-- return the complete result, dataset inspection, experiments, selected preprocessing strategy, selected model and best score as a structured state.
+- return the complete result, dataset inspection, experiments, selected validation strategy, selected preprocessing strategy, selected model, best score and score variability as a structured state.
 
 For classification:
 
 ```text
-Models → LightGBM / XGBoost / CatBoost
-Metric → ROC AUC
-Best   → highest score
+Models     → LightGBM / XGBoost / CatBoost
+Validation → StratifiedKFold (5 folds)
+Metric     → ROC AUC
+Best       → highest mean score
 ```
 
 For regression:
 
 ```text
-Models → LightGBM / XGBoost / CatBoost
-Metric → RMSE
-Best   → lowest score
+Models     → LightGBM / XGBoost / CatBoost
+Validation → KFold (5 folds)
+Metric     → RMSE
+Best       → lowest mean score
 ```
 
 ## Current architecture
@@ -134,14 +146,16 @@ Try Preprocessing Strategies
  Build Model Candidates
 LightGBM / XGBoost / CatBoost
        ↓
-Train / Validation Split
+ Select Validation Strategy
+ StratifiedKFold / KFold
        ↓
-Preprocess Training + Validation
+Preprocess Inside Each Fold
        ↓
  Train + Evaluate
- every combination
+ every fold, every combination
        ↓
  Compare Experiments
+ mean score + std
        ↓
  Select Best Experiment
        ↓
@@ -152,11 +166,18 @@ The current architecture remains intentionally compact.
 
 The `agent()` function still coordinates the complete workflow.
 
-It loads the dataset, detects the task and feature types, runs the Data Inspector introduced in Version 2, and keeps the preprocessing experiment logic introduced in Version 3.
+It loads the dataset, detects the task and feature types, runs the Data Inspector introduced in Version 2, keeps the preprocessing experiment logic introduced in Version 3, and preserves the model-selection layer introduced in Version 4.
 
-Version 4 adds a model-selection layer. For each preprocessing strategy, the agent evaluates three high-performance boosting models: LightGBM, XGBoost and CatBoost.
+Version 5 adds a smart-validation layer. For each preprocessing strategy and candidate model, the agent evaluates the experiment across multiple folds instead of relying on a single train-validation split.
 
-The validation protocol remains unchanged: every experiment uses the same train-validation split with `test_size=0.2` and `random_state=42`. Classification also uses stratification.
+Validation is now task-aware:
+
+```text
+classification → StratifiedKFold
+regression     → KFold
+```
+
+Both strategies use 5 folds, `shuffle=True` and `random_state=42`.
 
 Two preprocessing strategies remain available:
 
@@ -165,11 +186,9 @@ native → preserve missing values whenever supported by the selected model
 impute → numerical median + categorical most frequent value
 ```
 
-Preprocessing parameters are learned only from the training subset. Some models require minimal technical adaptation of categorical features, but no new preprocessing concept is introduced in Version 4.
+Preprocessing parameters are learned only from the training subset inside each fold. Every fold receives a fresh model instance, and each experiment stores `fold_scores`, `mean_score` and `std_score`.
 
-The agent evaluates every preprocessing-model combination, stores all experiment results, compares them using the metric selected for the detected task and returns the best combination.
-
-A typical classification state from the Adult Income dataset looks like:
+A typical classification state from the Adult Income dataset now looks like:
 
 ```python
 {
@@ -178,30 +197,35 @@ A typical classification state from the Adult Income dataset looks like:
     "categorical_features": [...],
     "inspection": {...},
     "metric": "roc_auc",
+    "validation": "StratifiedKFold",
+    "n_splits": 5,
     "experiments": [
-        {"preprocessing": "native", "model": "LightGBM", "score": 0.9311658417981501},
-        {"preprocessing": "native", "model": "XGBoost", "score": 0.929098},
-        {"preprocessing": "native", "model": "CatBoost", "score": 0.931383},
-        {"preprocessing": "impute", "model": "LightGBM", "score": 0.930687503244851},
-        {"preprocessing": "impute", "model": "XGBoost", "score": 0.928546},
-        {"preprocessing": "impute", "model": "CatBoost", "score": 0.932104618262178}
+        {"preprocessing": "native", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.929556, "std_score": 0.002508},
+        {"preprocessing": "native", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.926851, "std_score": 0.002227},
+        {"preprocessing": "native", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.930631, "std_score": 0.002246},
+        {"preprocessing": "impute", "model": "LightGBM", "fold_scores": [...], "mean_score": 0.929217, "std_score": 0.002713},
+        {"preprocessing": "impute", "model": "XGBoost", "fold_scores": [...], "mean_score": 0.926435, "std_score": 0.002643},
+        {"preprocessing": "impute", "model": "CatBoost", "fold_scores": [...], "mean_score": 0.930119, "std_score": 0.002428}
     ],
-    "best_preprocessing": "impute",
+    "best_preprocessing": "native",
     "best_model": "CatBoost",
-    "best_score": 0.932104618262178
+    "best_score": 0.930630626301291,
+    "best_std": 0.002246310473216
 }
 ```
 
 The same agent can also receive a regression dataset without changing its overall workflow. On `simple_regression.csv`, the best experiment is:
 
 ```text
+validation         = KFold
 best_preprocessing = impute
 best_model         = CatBoost
-best_score         = 1.6542186741
+best_score         = 1.6283421164
+best_std           = 0.1019398476
 metric             = RMSE
 ```
 
-Version 4 therefore adds the first explicit **model-selection layer** while preserving the preprocessing and validation logic established in the previous versions.
+Version 5 therefore adds the first explicit **smart-validation layer** while preserving the preprocessing and model-selection logic established in the previous versions.
 
 ## Project versions
 
@@ -211,6 +235,7 @@ Version 4 therefore adds the first explicit **model-selection layer** while pres
 | Version 2 | Data Inspector | Completed | [`v02-data-inspector`](v02-data-inspector/) |
 | Version 3 | Preprocessing Agent | Completed | [`v03-preprocessing-agent`](v03-preprocessing-agent/) |
 | Version 4 | Model Selection | Completed | [`v04-model-selection`](v04-model-selection/) |
+| Version 5 | Smart Validation | Completed | [`v05-smart-validation`](v05-smart-validation/) |
 
 ## Version 1 - Baseline Agent
 
@@ -1023,6 +1048,222 @@ Open the folder:
 
 [`v04-model-selection`](v04-model-selection/)
 
+## Version 5 - Smart Validation
+
+Version 5 introduces the next capability on top of model selection: **task-aware cross-validation**.
+
+The complete flow becomes:
+
+```text
+Dataset + Target
+       ↓
+   Detect Task
+       ↓
+  Detect Features
+       ↓
+  Inspect Dataset
+       ↓
+    Prepare X / y
+       ↓
+Try Preprocessing
+ native / impute
+       ↓
+ Build Candidate Models
+LightGBM / XGBoost / CatBoost
+       ↓
+Select Validation
+StratifiedKFold / KFold
+       ↓
+ Train + Evaluate
+ every fold, every combination
+       ↓
+ Compare Experiments
+ mean score + std
+       ↓
+ Select Best
+       ↓
+ State + Experiments
+```
+
+The objective is to make model selection more reliable by replacing the single train-validation split with a more robust validation strategy, while keeping preprocessing and model candidates unchanged.
+
+The main classification example continues to use the **Adult Income** dataset so that smart validation is the only new concept introduced in this version.
+
+### Validation strategy
+
+Version 5 introduces task-aware validation:
+
+```python
+def select_validation(task, n_splits=5):
+    if task == "classification":
+        return StratifiedKFold(
+            n_splits=n_splits,
+            shuffle=True,
+            random_state=42
+        )
+
+    return KFold(
+        n_splits=n_splits,
+        shuffle=True,
+        random_state=42
+    )
+```
+
+Therefore:
+
+```text
+classification → StratifiedKFold
+regression     → KFold
+```
+
+Both use 5 folds, `shuffle=True` and `random_state=42`.
+
+### Smart-validation experiments
+
+Every preprocessing strategy is evaluated with every candidate model across all folds:
+
+```python
+experiments = []
+
+for preprocessing in PREPROCESSING_STRATEGIES:
+    for model_name in models:
+        result = train_and_evaluate(
+            X,
+            y,
+            model_name,
+            task,
+            numerical_features,
+            categorical_features,
+            preprocessing,
+            validation
+        )
+
+        experiments.append({
+            "preprocessing": preprocessing,
+            "model": model_name,
+            "fold_scores": result["fold_scores"],
+            "mean_score": result["mean_score"],
+            "std_score": result["std_score"]
+        })
+```
+
+This produces a richer experiment grid:
+
+```text
+preprocessing × model × folds → fold_scores, mean_score, std_score
+```
+
+Preprocessing is refit inside each fold and every fold uses a fresh model instance.
+
+### Best experiment selection
+
+Selection now uses the mean score instead of the score from one split:
+
+```python
+def select_best_experiment(experiments, metric):
+    if metric == "rmse":
+        return min(experiments, key=lambda experiment: experiment["mean_score"])
+
+    return max(experiments, key=lambda experiment: experiment["mean_score"])
+```
+
+Therefore:
+
+```text
+ROC AUC → maximize mean_score
+RMSE    → minimize mean_score
+```
+
+### Agent
+
+Version 5 integrates smart validation directly into the existing agent:
+
+```python
+def agent(data_path, target):
+    df = pd.read_csv(data_path)
+
+    task = detect_task(df, target)
+    numerical, categorical = detect_features(df, target)
+    inspection = inspect_dataset(df, target)
+    X, y = prepare_data(df, target)
+
+    metric = select_metric(task)
+    validation = select_validation(task)
+    models = select_models(task, categorical)
+
+    experiments = []
+
+    for preprocessing in PREPROCESSING_STRATEGIES:
+        for model_name in models:
+            result = train_and_evaluate(
+                X,
+                y,
+                model_name,
+                task,
+                numerical,
+                categorical,
+                preprocessing,
+                validation
+            )
+
+            experiments.append({
+                "preprocessing": preprocessing,
+                "model": model_name,
+                "fold_scores": result["fold_scores"],
+                "mean_score": result["mean_score"],
+                "std_score": result["std_score"]
+            })
+
+    best_experiment = select_best_experiment(experiments, metric)
+
+    return {
+        "task": task,
+        "numerical_features": numerical,
+        "categorical_features": categorical,
+        "inspection": inspection,
+        "metric": metric,
+        "validation": validation.__class__.__name__,
+        "n_splits": validation.n_splits,
+        "experiments": experiments,
+        "best_preprocessing": best_experiment["preprocessing"],
+        "best_model": best_experiment["model"],
+        "best_score": best_experiment["mean_score"],
+        "best_std": best_experiment["std_score"]
+    }
+```
+
+### Classification result
+
+On Adult Income, Version 5 selects:
+
+```text
+validation         = StratifiedKFold
+best_preprocessing = native
+best_model         = CatBoost
+best_score         = 0.930630626301291
+best_std           = 0.002246310473216
+metric             = ROC AUC
+```
+
+### Regression test
+
+On `simple_regression.csv`, Version 5 selects:
+
+```text
+validation         = KFold
+best_preprocessing = impute
+best_model         = CatBoost
+best_score         = 1.6283421164
+best_std           = 0.1019398476
+metric             = RMSE
+```
+
+Version 5 therefore adds an explicit **smart-validation layer** while keeping task detection, inspection, preprocessing strategies, models, metrics and hyperparameter configurations unchanged.
+
+Open the folder:
+
+[`v05-smart-validation`](v05-smart-validation/)
+
 ## Component responsibilities
 
 | Component | Responsibility |
@@ -1031,13 +1272,14 @@ Open the folder:
 | `detect_features()` | Identifies numerical and categorical features |
 | `inspect_dataset()` | Profiles shape, target, dtypes, missing values and feature cardinality |
 | `prepare_data()` | Separates input features `X` from target `y` |
-| `preprocess_data()` | Applies the selected preprocessing strategy using parameters learned from training data |
+| `preprocess_data()` | Applies the selected preprocessing strategy using parameters learned from training data or training folds |
 | `select_models()` | Builds LightGBM, XGBoost and CatBoost candidates for the detected task |
 | `select_metric()` | Selects the evaluation metric |
-| `train_and_evaluate()` | Creates the split, applies preprocessing, trains the selected model and computes the score |
-| `select_best_experiment()` | Selects the best preprocessing-model experiment according to the metric direction |
-| `agent()` | Coordinates the complete AutoML workflow and experiment grid |
-| State | Stores task, features, inspection, metric, experiments, selected preprocessing, selected model and best score |
+| `select_validation()` | Selects the validation strategy according to the task |
+| `train_and_evaluate()` | Applies preprocessing inside each fold, trains fresh model instances and returns fold scores, mean and standard deviation |
+| `select_best_experiment()` | Selects the best preprocessing-model experiment according to the metric direction and mean score |
+| `agent()` | Coordinates the complete AutoML workflow and cross-validated experiment grid |
+| State | Stores task, features, inspection, metric, validation, experiments, selected preprocessing, selected model, best score and best standard deviation |
 
 ## Documentation
 
@@ -1076,6 +1318,13 @@ For Version 4:
 - [`Report Version 4 - Model Selection.pdf`](v04-model-selection/Report%20Version%204%20-%20Model%20Selection.pdf)
 - [`Version 4.png`](v04-model-selection/Version%204.png)
 
+For Version 5:
+
+- [`building-agentic-automl.ipynb`](v05-smart-validation/building-agentic-automl.ipynb)
+- [`Relazione Versione 5 - Smart Validation.pdf`](v05-smart-validation/Relazione%20Versione%205%20-%20Smart%20Validation.pdf)
+- [`Report Version 5 - Smart Validation.pdf`](v05-smart-validation/Report%20Version%205%20-%20Smart%20Validation.pdf)
+- [`Version 5.png`](v05-smart-validation/Version%205.png)
+
 ## Repository structure
 
 ```text
@@ -1103,6 +1352,12 @@ building-agentic-automl/
 │   ├── Relazione Versione 4 - Model Selection.pdf
 │   ├── Report Version 4 - Model Selection.pdf
 │   └── Version 4.png
+│
+├── v05-smart-validation/
+│   ├── building-agentic-automl.ipynb
+│   ├── Relazione Versione 5 - Smart Validation.pdf
+│   ├── Report Version 5 - Smart Validation.pdf
+│   └── Version 5.png
 │
 ├── README.md
 ├── LICENSE
@@ -1151,6 +1406,7 @@ v01-baseline-agent/building-agentic-automl.ipynb
 v02-data-inspector/building-agentic-automl.ipynb
 v03-preprocessing-agent/building-agentic-automl.ipynb
 v04-model-selection/building-agentic-automl.ipynb
+v05-smart-validation/building-agentic-automl.ipynb
 ```
 
 and run the cells in order.
@@ -1237,7 +1493,27 @@ select
 return
 ```
 
-The state now records dataset information, alternative preprocessing-model experiments, the selected preprocessing strategy, the selected model and the best score.
+Version 5 extends the experiment loop to smart validation:
+
+```text
+observe
+   ↓
+inspect
+   ↓
+try preprocessing
+   ↓
+try models
+   ↓
+validate across folds
+   ↓
+compare
+   ↓
+select
+   ↓
+return
+```
+
+The state now records dataset information, alternative preprocessing-model experiments, the selected validation strategy, the selected preprocessing strategy, the selected model, the best score and the score variability.
 
 Each completed version remains available as an independent learning resource.
 
@@ -1247,7 +1523,7 @@ Each completed version remains available as an independent learning resource.
 - [x] Version 2 - Data Inspector
 - [x] Version 3 - Preprocessing Agent
 - [x] Version 4 - Model Selection
-- [ ] Version 5 - Smart Validation
+- [x] Version 5 - Smart Validation
 - [ ] Version 6 - Feature Engineering
 - [ ] Version 7 - Hyperparameter Optimization
 - [ ] Version 8 - Senior Agent
@@ -1260,7 +1536,7 @@ The guiding rule remains:
 
 ## Current limitations
 
-Version 4 is intentionally compact and educational:
+Version 5 is intentionally compact and educational:
 
 - task detection still relies only on the number of unique target values;
 - the Data Inspector remains descriptive and does not decide which preprocessing strategies or models should be tried;
@@ -1269,19 +1545,19 @@ Version 4 is intentionally compact and educational:
 - categorical imputation uses only the most frequent value;
 - there is no scaling or comparison of encoding strategies;
 - there is no dedicated outlier detection or treatment;
-- there is no explicit data-leakage detection beyond fitting preprocessing parameters only on training data;
+- there is no explicit data-leakage detection beyond fitting preprocessing parameters only on training folds;
 - duplicate rows, skewness and semantic feature types are not inspected yet;
 - model comparison is limited to LightGBM, XGBoost and CatBoost;
 - hyperparameters remain fixed at default or near-default values;
-- evaluation uses a single train-validation split;
-- there is no cross-validation;
+- cross-validation is fixed to 5 folds;
+- there is no group-aware, time-series-aware or nested validation logic;
 - all decisions are coordinated directly by one `agent()` function;
 - there is no planner or multi-agent architecture yet;
 - the best fitted pipeline is not yet persisted as a reusable artifact.
 
 These limitations are intentional.
 
-Version 4 focuses specifically on model selection. Smarter validation, feature engineering and hyperparameter optimization remain separate concepts for later versions.
+Version 5 focuses specifically on smart validation. Feature engineering and hyperparameter optimization remain separate concepts for later versions.
 
 ## Project status
 
@@ -1293,19 +1569,21 @@ Version 4 focuses specifically on model selection. Smarter validation, feature e
 
 **Version 4 - Model Selection is completed.**
 
-The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer, preprocessing experimentation and automatic model comparison.
+**Version 5 - Smart Validation is completed.**
+
+The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer, preprocessing experimentation, automatic model comparison and task-aware cross-validation.
 
 The agent can move automatically from a tabular dataset and target column to evaluated experiments while adapting between classification and regression.
 
 Before training, it can inspect dataset dimensions, target behavior, feature types, missing values and feature cardinality.
 
-It can compare native missing-value handling with simple imputation and evaluate LightGBM, XGBoost and CatBoost under the same validation protocol.
+It can compare native missing-value handling with simple imputation, evaluate LightGBM, XGBoost and CatBoost, and validate every preprocessing-model combination across multiple folds.
 
-It stores every preprocessing-model experiment and returns the best preprocessing strategy, best model and best score.
+It stores every experiment together with fold scores, mean score and standard deviation, and returns the best preprocessing strategy, validation strategy, best model, best score and best standard deviation.
 
-The project is intentionally not considered complete at Version 4.
+The project is intentionally not considered complete at Version 5.
 
-Future versions can progressively add smarter validation, feature engineering, hyperparameter optimization and more advanced agentic orchestration while preserving the educational structure of the project.
+Future versions can progressively add feature engineering, hyperparameter optimization and more advanced agentic orchestration while preserving the educational structure of the project.
 
 ## License
 
