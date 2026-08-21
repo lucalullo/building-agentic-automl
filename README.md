@@ -13,6 +13,8 @@ The project focuses on understanding how an AutoML agent can inspect tabular dat
 
 The architecture intentionally starts simple. Each version introduces one new concept while preserving the ideas developed in the previous versions.
 
+Version 8 completes the original roadmap with **Autonomous Experiment Planning**. The project now moves from exhaustive AutoML search to a first adaptive, transparent and budget-aware Senior Agent that decides which experiments are worth executing.
+
 ## Project roadmap
 
 The project follows one main principle:
@@ -62,7 +64,7 @@ Version 5 adds **Smart Validation** while keeping preprocessing, model candidate
 
 1. replace the single train-validation split with task-aware cross-validation;
 2. use `StratifiedKFold` for classification and `KFold` for regression;
-3. evaluate every preprocessing-model combination across 5 folds;
+3. evaluate every preprocessing-model combination across multiple folds;
 4. store fold scores, mean score and standard deviation for every experiment;
 5. select the best experiment using the mean validation score;
 6. return the selected validation strategy together with `best_preprocessing`, `best_model`, `best_score` and `best_std`.
@@ -73,7 +75,7 @@ Version 6 adds **Feature Engineering** while keeping preprocessing, models, metr
 2. use `none` to preserve the original features;
 3. use `interactions` to add pairwise multiplication features between numerical variables;
 4. apply feature engineering inside each validation fold after preprocessing;
-5. evaluate every preprocessing-feature engineering-model combination across 5 folds;
+5. evaluate every preprocessing-feature engineering-model combination across the selected folds;
 6. return `best_feature_engineering` together with the previously selected experiment information.
 
 Version 7 adds **Hyperparameter Optimization** while keeping preprocessing, feature engineering, models, metrics and validation unchanged:
@@ -81,13 +83,25 @@ Version 7 adds **Hyperparameter Optimization** while keeping preprocessing, feat
 1. define a small model-specific hyperparameter search space;
 2. preserve the original Version 6 configuration as a baseline for every model;
 3. compare one additional configuration for LightGBM, XGBoost and CatBoost;
-4. evaluate every preprocessing-feature engineering-model-hyperparameter combination across 5 folds;
+4. evaluate every preprocessing-feature engineering-model-hyperparameter combination across the selected folds;
 5. store the hyperparameters together with fold scores, mean score and standard deviation;
 6. return `best_params` together with the best preprocessing, feature engineering strategy, model and validation results.
 
+Version 8 adds **Autonomous Experiment Planning** through a dedicated Senior Agent:
+
+1. preserve the same 24-candidate experiment space introduced in Version 7;
+2. distinguish binary classification, multiclass classification and regression;
+3. establish one baseline for each model family;
+4. choose subsequent experiments adaptively from previous results and dataset information;
+5. test alternative preprocessing when missing values are present;
+6. explore hyperparameters and feature interactions around promising configurations;
+7. operate under a fixed experiment budget instead of evaluating the complete Cartesian product;
+8. record decision reasons, execution status, timing, scores and the complete decision history;
+9. return the best observed configuration together with the planning trajectory.
+
 Each version preserves the previous workflow as much as possible so that the effect of the new capability can be studied in isolation.
 
-Future versions will progressively introduce more advanced agentic decision-making and orchestration.
+Version 8 completes the original project roadmap.
 
 ## Repository
 
@@ -101,47 +115,62 @@ The current agent can:
 
 - load a tabular CSV dataset;
 - receive the target column from the user;
-- detect whether the problem is classification or regression;
+- detect binary classification, multiclass classification and regression;
 - identify numerical features automatically;
 - identify categorical features automatically;
 - inspect dataset dimensions;
 - inspect target distribution for classification tasks;
 - inspect target summary statistics for regression tasks;
 - inspect feature data types;
-- detect missing values;
+- detect missing values and missing-value percentages;
 - measure feature cardinality;
-- try multiple preprocessing strategies;
+- detect duplicate rows;
 - preserve missing values whenever the selected model supports them directly;
 - impute missing numerical values with the training median;
 - impute missing categorical values with the most frequent training value;
-- learn preprocessing parameters only from the training data or training fold;
+- learn preprocessing parameters only from the training fold;
 - align categorical vocabularies between training and validation data;
-- compare multiple feature engineering strategies;
-- preserve the original feature space with `none`;
-- generate pairwise numerical interaction features with `interactions`;
+- compare the original feature space with pairwise numerical interactions;
 - apply feature engineering independently inside each validation fold after preprocessing;
 - build LightGBM, XGBoost and CatBoost candidates according to the detected task;
-- compare multiple hyperparameter configurations for each model;
-- preserve the original model configuration as an HPO baseline;
-- store the hyperparameter configuration tested in every experiment;
-- select an evaluation metric automatically;
-- select a validation strategy automatically;
-- use `StratifiedKFold` for classification and `KFold` for regression;
-- evaluate every preprocessing-feature engineering-model-hyperparameter combination across 5 folds;
-- store fold scores, mean score and standard deviation for every experiment;
-- compare experiment results using the appropriate metric direction;
-- select the best experiment using the mean validation score;
-- adapt automatically between classification and regression;
-- return the complete result, dataset inspection, experiments, selected validation strategy, selected preprocessing strategy, selected feature engineering strategy, selected model, selected hyperparameters, best score and score variability as a structured state.
+- support binary and multiclass objectives for the classification models;
+- keep baseline and alternative hyperparameter configurations for each model family;
+- build the complete 24-candidate experiment space;
+- select the evaluation metric automatically;
+- use `ROC AUC` for binary classification;
+- use `ROC AUC OvR Macro` for multiclass classification;
+- use `RMSE` for regression;
+- select `StratifiedKFold` for classification and `KFold` for regression;
+- reduce the number of classification folds automatically when the smallest class is too small for 5-fold validation;
+- evaluate a selected experiment with preprocessing and feature engineering isolated inside each validation fold;
+- create a fresh model instance for every fold;
+- track fold scores, mean score, standard deviation, execution time, status and failures;
+- establish baseline performance for LightGBM, XGBoost and CatBoost;
+- select subsequent experiments adaptively using previous experiment results and dataset missing-value information;
+- operate within a fixed experiment budget;
+- record the reason behind every experiment selection;
+- maintain a complete decision history;
+- return the best observed preprocessing strategy, feature engineering strategy, model, hyperparameters, validation score and score variability as part of the final state.
 
-For classification:
+For binary classification:
 
 ```text
 Models              → LightGBM / XGBoost / CatBoost
 Feature engineering → none / interactions
 Hyperparameters     → baseline / alternative configuration
-Validation          → StratifiedKFold (5 folds)
+Validation          → StratifiedKFold (up to 5 folds)
 Metric              → ROC AUC
+Best                → highest mean score
+```
+
+For multiclass classification:
+
+```text
+Models              → LightGBM / XGBoost / CatBoost
+Feature engineering → none / interactions
+Hyperparameters     → baseline / alternative configuration
+Validation          → StratifiedKFold (up to 5 folds)
+Metric              → ROC AUC OvR Macro
 Best                → highest mean score
 ```
 
@@ -151,10 +180,12 @@ For regression:
 Models              → LightGBM / XGBoost / CatBoost
 Feature engineering → none / interactions
 Hyperparameters     → baseline / alternative configuration
-Validation          → KFold (5 folds)
+Validation          → KFold (up to 5 folds)
 Metric              → RMSE
 Best                → lowest mean score
 ```
+
+With the default configuration, the candidate pool contains 24 experiments while the Senior Agent executes at most 10 of them.
 
 ## Current architecture
 
@@ -162,6 +193,7 @@ Best                → lowest mean score
 Dataset + Target
        ↓
   Task Detection
+binary / multiclass / regression
        ↓
  Feature Detection
        ↓
@@ -169,20 +201,14 @@ Dataset + Target
        ↓
    Prepare X / y
        ↓
-Try Preprocessing Strategies
-  native / impute
+Build Candidate Experiment Space
+24 available configurations
        ↓
-Try Feature Engineering Strategies
-  none / interactions
+Select Metric + Validation
        ↓
- Build Model Candidates
-LightGBM / XGBoost / CatBoost
+Senior Agent Planner
        ↓
-Try Hyperparameter Configurations
- baseline / alternative
-       ↓
- Select Validation Strategy
- StratifiedKFold / KFold
+Choose Next Experiment + Reason
        ↓
 Preprocess Inside Each Fold
        ↓
@@ -190,123 +216,106 @@ Engineer Features Inside Each Fold
        ↓
 Create Fresh Model with Parameters
        ↓
- Train + Evaluate
- every fold, every combination
+Cross-Validate Selected Experiment
        ↓
- Compare Experiments
- mean score + std
+Record Score / Std / Time / Status
        ↓
- Select Best Experiment
+Update Decision History + Current Best
        ↓
-State + Experiments
+Budget Remaining?
+   ↙         ↘
+ yes         no
+  ↓           ↓
+plan next   return state
+experiment  + best observed configuration
 ```
 
-The current architecture remains intentionally compact.
+The architecture remains intentionally compact and rule-based.
 
-The `agent()` function still coordinates the complete workflow.
+The `agent()` function coordinates the complete workflow, while the **Senior Agent** introduced in Version 8 decides which experiment should be executed next.
 
-It loads the dataset, detects the task and feature types, runs the Data Inspector introduced in Version 2, keeps the preprocessing experiment logic introduced in Version 3, preserves the model-selection layer introduced in Version 4, uses the smart-validation layer introduced in Version 5, and retains the feature-engineering layer introduced in Version 6.
-
-Version 7 adds a controlled hyperparameter-optimization layer.
-
-For every preprocessing strategy, feature engineering strategy and candidate model, the agent evaluates two hyperparameter configurations:
+The available experiment space is unchanged from Version 7:
 
 ```text
-baseline    → original Version 6 model configuration
-alternative → one predefined model-specific configuration
-```
-
-The current search spaces are:
-
-```text
-LightGBM
-baseline    → {}
-alternative → n_estimators=200, learning_rate=0.05, num_leaves=31
-
-XGBoost
-baseline    → {}
-alternative → n_estimators=200, learning_rate=0.05, max_depth=4
-
-CatBoost
-baseline    → {}
-alternative → iterations=500, learning_rate=0.05, depth=6
-```
-
-Validation remains task-aware:
-
-```text
-classification → StratifiedKFold
-regression     → KFold
-```
-
-Both strategies use 5 folds, `shuffle=True` and `random_state=42`.
-
-Preprocessing and feature engineering remain isolated inside each fold. A fresh model instance is then created using the hyperparameter configuration being evaluated.
-
-The experiment grid is now:
-
-```text
-2 preprocessing
-× 2 feature engineering
-× 3 models
+2 preprocessing strategies
+× 2 feature engineering strategies
+× 3 model families
 × 2 hyperparameter configurations
-= 24 experiments
+= 24 candidate experiments
 ```
 
-Each experiment is evaluated across 5 folds:
+Version 8 separates **what can be tested** from **what is actually executed**.
+
+With the default budget:
 
 ```text
-24 experiments × 5 folds = 120 model fits per dataset
+available experiments = 24
+experiment budget      = 10
+executed experiments   = 10
+search reduction       = 58.33%
 ```
 
-Every experiment stores:
+With 5-fold cross-validation, this means at most:
+
+```text
+10 experiments × 5 folds = 50 model fits
+```
+
+instead of the 120 fits required by the exhaustive Version 7 search.
+
+The planning policy is deterministic and sequential:
+
+```text
+Stage 1 → establish a native + none + default baseline for every model family
+Stage 2 → test the alternative hyperparameter configuration of the current best model
+Stage 3 → when missing values exist, test alternative preprocessing
+Stage 4 → test numerical interactions around the current best configuration
+Stage 5 → use the remaining budget to explore untested candidates
+```
+
+The planner does not currently use execution time to choose the next experiment. Time is recorded for transparency and future extensions.
+
+Every executed experiment stores:
 
 ```text
 preprocessing
 feature_engineering
 model
 hyperparameters
+status
 fold_scores
 mean_score
 std_score
+duration_seconds
+error
 ```
 
-A typical classification state from the Adult Income dataset now looks like:
+The decision history additionally stores:
+
+```text
+step
+reason
+selected configuration
+status
+score
+duration_seconds
+best_score_after_step
+```
+
+A typical Adult Income state now includes:
 
 ```python
 {
     "task": "classification",
-    "numerical_features": [...],
-    "categorical_features": [...],
-    "inspection": {...},
+    "classification_type": "binary",
     "metric": "roc_auc",
     "validation": "StratifiedKFold",
     "n_splits": 5,
-    "experiments": [
-        {
-            "preprocessing": "native",
-            "feature_engineering": "none",
-            "model": "CatBoost",
-            "hyperparameters": {},
-            "fold_scores": [...],
-            "mean_score": 0.930630626301291,
-            "std_score": 0.002246310473216
-        },
-        {
-            "preprocessing": "native",
-            "feature_engineering": "none",
-            "model": "CatBoost",
-            "hyperparameters": {
-                "iterations": 500,
-                "learning_rate": 0.05,
-                "depth": 6
-            },
-            "fold_scores": [...],
-            "mean_score": 0.9299103499067497,
-            "std_score": 0.002476258487812128
-        },
-        ...
-    ],
+    "experiment_budget": 10,
+    "experiments_available": 24,
+    "experiments_executed": 10,
+    "experiments": [...],
+    "decision_history": [...],
     "best_preprocessing": "native",
     "best_feature_engineering": "none",
     "best_model": "CatBoost",
@@ -316,22 +325,9 @@ A typical classification state from the Adult Income dataset now looks like:
 }
 ```
 
-On classification, the original CatBoost configuration remains the best experiment.
+On Adult Income, the Senior Agent recovers the same best configuration found by Version 7 while executing only 10 of the 24 available experiments.
 
-The same agent can also receive a regression dataset without changing its overall workflow. On `simple_regression.csv`, the best experiment is:
-
-```text
-validation               = KFold
-best_preprocessing       = impute
-best_feature_engineering = none
-best_model               = CatBoost
-best_params              = iterations=500, learning_rate=0.05, depth=6
-best_score               = 1.6078463494
-best_std                 = 0.1001204396
-metric                   = RMSE
-```
-
-Version 7 therefore adds the first explicit **hyperparameter-optimization layer** while preserving all previous architectural decisions.
+Version 8 therefore adds the first explicit **autonomous experiment-planning layer** to the project.
 
 ## Project versions
 
@@ -344,6 +340,7 @@ Version 7 therefore adds the first explicit **hyperparameter-optimization layer*
 | Version 5 | Smart Validation | Completed | [`v05-smart-validation`](v05-smart-validation/) |
 | Version 6 | Feature Engineering | Completed | [`v06-feature-engineering`](v06-feature-engineering/) |
 | Version 7 | Hyperparameter Optimization | Completed | [`v07-hyperparameter-optimization`](v07-hyperparameter-optimization/) |
+| Version 8 | Autonomous Experiment Planning | Completed | [`v08-senior-agent`](v08-senior-agent/) |
 
 ## Version 1 - Baseline Agent
 
@@ -1971,24 +1968,312 @@ Open the folder:
 
 [`v07-hyperparameter-optimization`](v07-hyperparameter-optimization/)
 
+## Version 8 - Autonomous Experiment Planning
+
+Version 8 introduces the final capability in the original roadmap: a **Senior Agent** responsible for autonomous experiment planning.
+
+The complete flow becomes:
+
+```text
+Dataset + Target
+       ↓
+   Detect Task
+       ↓
+  Detect Features
+       ↓
+  Inspect Dataset
+       ↓
+ Build Experiment Space
+   24 candidates
+       ↓
+ Select Metric + Validation
+       ↓
+ Senior Agent Planner
+       ↓
+ Choose Next Experiment
+       ↓
+ Cross-Validate Candidate
+       ↓
+ Record Result + Reason
+       ↓
+ Update Current Best
+       ↓
+ Continue Until Budget Ends
+       ↓
+ State + Decision History
+```
+
+The objective is no longer to evaluate the complete search space exhaustively.
+
+Instead, Version 8 keeps the same tools and candidate configurations introduced in previous versions while adding a policy that decides **which experiments deserve the available budget**.
+
+### Extended task detection
+
+Version 8 distinguishes:
+
+```text
+binary classification
+multiclass classification
+regression
+```
+
+Non-numerical targets are treated as classification targets.
+
+For numerical targets, the agent considers both the number of unique values and their ratio relative to dataset size.
+
+Classification is then separated into binary and multiclass tasks so that models and metrics can be configured appropriately.
+
+### Extended Data Inspection
+
+The existing inspector now stores:
+
+```text
+dataset shape
+duplicate rows
+target dtype and distribution
+feature dtypes
+missing-value counts
+missing-value percentages
+feature cardinality
+```
+
+In the current planning policy, missing-value information is used directly to guide preprocessing decisions.
+
+The remaining inspection signals are stored as context for future extensions.
+
+### Candidate experiment space
+
+Version 8 preserves the deliberately small Version 7 search space:
+
+```text
+2 preprocessing strategies
+× 2 feature engineering strategies
+× 3 models
+× 2 hyperparameter configurations
+= 24 candidate experiments
+```
+
+The difference is that the complete Cartesian product is no longer executed automatically.
+
+The Senior Agent receives the candidate pool and selects experiments sequentially.
+
+### Senior Agent planning policy
+
+The planning policy is explicit, deterministic and inspectable.
+
+Its current stages are:
+
+```text
+Stage 1
+establish one native + none + default baseline for each model family
+
+Stage 2
+try the alternative hyperparameter configuration of the current best model
+
+Stage 3
+if missing values exist, compare alternative preprocessing while keeping
+the rest of the best configuration fixed
+
+Stage 4
+test numerical interactions around the current best configuration
+
+Stage 5
+use the remaining budget to explore untested candidates
+```
+
+The planner returns both the selected candidate and a human-readable reason for the decision.
+
+This creates an explicit distinction between:
+
+```text
+experiment space → everything the agent could evaluate
+planning policy  → what the agent chooses to evaluate
+```
+
+### Adaptive experiment execution
+
+The Senior Agent executes one experiment at a time.
+
+For each selected candidate:
+
+1. preprocessing is learned inside each training fold;
+2. feature engineering is applied inside the fold;
+3. a fresh model instance is created with the selected hyperparameters;
+4. the candidate is evaluated using the selected cross-validation strategy;
+5. fold scores, mean score and standard deviation are recorded;
+6. execution time and experiment status are recorded;
+7. failures are stored without stopping the complete AutoML process;
+8. the current best configuration is updated;
+9. the decision is appended to the decision history.
+
+The process stops when the experiment budget is exhausted or no candidates remain.
+
+The default budget is:
+
+```text
+MAX_EXPERIMENTS = 10
+```
+
+Therefore, with the current 24-candidate space:
+
+```text
+24 candidates
+10 executed experiments
+58.33% search reduction
+```
+
+With 5-fold cross-validation, Version 8 performs at most 50 model fits per dataset instead of the 120 fits required by Version 7 exhaustive search.
+
+### Metric and validation support
+
+Metric selection now distinguishes binary and multiclass classification:
+
+```text
+binary classification     → ROC AUC
+multiclass classification → ROC AUC OvR Macro
+regression                → RMSE
+```
+
+Validation remains task-aware:
+
+```text
+classification → StratifiedKFold
+regression     → KFold
+```
+
+The default is 5 folds.
+
+For classification, the number of folds is reduced automatically when the smallest class does not contain enough observations for 5-fold cross-validation.
+
+### Adult Income result
+
+On Adult Income, the Senior Agent executes 10 experiments out of the 24 available candidates.
+
+The best observed configuration is:
+
+```text
+task                     = binary classification
+validation               = StratifiedKFold
+best_preprocessing       = native
+best_feature_engineering = none
+best_model               = CatBoost
+best_params              = {}
+best_score               = 0.9306306263
+best_std                 = 0.0022463105
+metric                   = ROC AUC
+```
+
+The agent therefore recovers the same best configuration found by Version 7 without executing the complete search space.
+
+This demonstrates the intended Version 8 concept: planning can reduce the amount of search while preserving a strong observed solution, without claiming a guarantee of global optimality.
+
+### Generalization tests
+
+The complete `agent()` function is also evaluated without changing the planning policy on three additional datasets.
+
+The observed best configurations are:
+
+```text
+Wine
+task                     = multiclass classification
+best_model               = CatBoost
+best_preprocessing       = native
+best_feature_engineering = none
+best_score               = 0.998847
+metric                   = ROC AUC OvR Macro
+
+California Housing
+task                     = regression
+best_model               = CatBoost
+best_preprocessing       = impute
+best_feature_engineering = interactions
+best_score               = 45482.05
+metric                   = RMSE
+
+California Housing Numeric
+task                     = regression
+best_model               = CatBoost
+best_preprocessing       = native
+best_feature_engineering = interactions
+best_score               = 45703.19
+metric                   = RMSE
+```
+
+The mixed-type California Housing dataset contains missing values, so the planner actively tests alternative preprocessing.
+
+The numeric California representation contains no missing values, so imputation is not prioritized within the observed experiment budget.
+
+This makes the decision history meaningfully different across datasets while preserving the same planning policy.
+
+### Agent
+
+The final `agent()` function now coordinates:
+
+```text
+data loading
+task detection
+feature detection
+dataset inspection
+metric selection
+validation selection
+candidate experiment construction
+Senior Agent planning
+adaptive experiment execution
+decision-history tracking
+best observed configuration selection
+```
+
+The final state includes:
+
+```text
+task
+classification_type
+features
+inspection
+metric
+validation
+n_splits
+experiment_budget
+experiments_available
+experiments_executed
+total_duration_seconds
+experiments
+decision_history
+best_preprocessing
+best_feature_engineering
+best_model
+best_params
+best_score
+best_std
+```
+
+Version 8 therefore moves the project from exhaustive AutoML search to a first **adaptive, transparent and budget-aware Agentic AutoML system**.
+
+Open the folder:
+
+[`v08-senior-agent`](v08-senior-agent/)
+
 ## Component responsibilities
 
 | Component | Responsibility |
 |---|---|
-| `detect_task()` | Determines whether the problem is classification or regression |
+| `detect_task()` | Distinguishes binary classification, multiclass classification and regression |
 | `detect_features()` | Identifies numerical and categorical features |
-| `inspect_dataset()` | Profiles shape, target, dtypes, missing values and feature cardinality |
+| `inspect_dataset()` | Profiles shape, target, dtypes, missing counts and percentages, cardinality and duplicate rows |
 | `prepare_data()` | Separates input features `X` from target `y` |
-| `preprocess_data()` | Applies the selected preprocessing strategy using parameters learned from training data or training folds |
+| `preprocess_data()` | Applies the selected preprocessing strategy using parameters learned from the training fold |
 | `apply_feature_engineering()` | Preserves the original feature space or adds pairwise numerical interaction features |
 | `HYPERPARAMETER_SEARCH_SPACES` | Stores the baseline and alternative hyperparameter configurations for each model |
-| `select_models()` | Builds LightGBM, XGBoost and CatBoost candidates and applies model-specific hyperparameters |
-| `select_metric()` | Selects the evaluation metric |
-| `select_validation()` | Selects the validation strategy according to the task |
-| `train_and_evaluate()` | Applies preprocessing and feature engineering inside each fold, creates a fresh parameterized model instance and returns fold scores, mean and standard deviation |
-| `select_best_experiment()` | Selects the best preprocessing-feature engineering-model-hyperparameter experiment according to the metric direction and mean score |
-| `agent()` | Coordinates the complete AutoML workflow and cross-validated experiment grid |
-| State | Stores task, features, inspection, metric, validation, experiments, selected preprocessing, selected feature engineering strategy, selected model, selected hyperparameters, best score and best standard deviation |
+| `select_models()` | Builds LightGBM, XGBoost and CatBoost candidates with task-specific objectives and model-specific hyperparameters |
+| `build_experiment_space()` | Builds the complete 24-candidate preprocessing-feature engineering-model-hyperparameter space |
+| `select_metric()` | Selects ROC AUC, ROC AUC OvR Macro or RMSE according to the detected task |
+| `select_validation()` | Selects task-aware cross-validation and adapts classification folds when necessary |
+| `train_and_evaluate()` | Evaluates one selected experiment across folds and returns score statistics, status, execution time and failures |
+| `best_completed_experiment()` | Returns the best successfully completed experiment according to the metric direction |
+| `choose_next_experiment()` | Implements the deterministic Senior Agent planning policy and returns the next candidate with its decision reason |
+| `run_senior_agent()` | Executes adaptive experiments sequentially within the budget and records the decision history |
+| `agent()` | Coordinates the complete budget-aware Agentic AutoML workflow |
+| State | Stores task, classification type, inspection, metric, validation, budget, executed experiments, decision history, best observed configuration, score variability and execution time |
 
 ## Documentation
 
@@ -2003,50 +2288,57 @@ For Version 1:
 
 - [`building-agentic-automl.ipynb`](v01-baseline-agent/building-agentic-automl.ipynb)
 - [`Relazione Versione 1 - Baseline Agent.pdf`](v01-baseline-agent/Relazione%20Versione%201%20-%20Baseline%20Agent.pdf)
-- [`Report Version 1 - Baseline Agent.pdf`](v01-baseline-agent/Report%20Version%201%20-%20Baseline%20Agent.pdf)
+- [`Report Version 1 - Baseline Agent.pdf`](v01-baseline-agent/Report%20Versione%201%20-%20Baseline%20Agent.pdf)
 - [`Version 1.png`](v01-baseline-agent/Version%201.png)
 
 For Version 2:
 
 - [`building-agentic-automl.ipynb`](v02-data-inspector/building-agentic-automl.ipynb)
 - [`Relazione Versione 2 - Data Inspector.pdf`](v02-data-inspector/Relazione%20Versione%202%20-%20Data%20Inspector.pdf)
-- [`Report Version 2 - Data Inspector.pdf`](v02-data-inspector/Report%20Version%202%20-%20Data%20Inspector.pdf)
+- [`Report Version 2 - Data Inspector.pdf`](v02-data-inspector/Report%20Versione%202%20-%20Data%20Inspector.pdf)
 - [`Version 2.png`](v02-data-inspector/Version%202.png)
 
 For Version 3:
 
 - [`building-agentic-automl.ipynb`](v03-preprocessing-agent/building-agentic-automl.ipynb)
 - [`Relazione Versione 3 - Preprocessing Agent.pdf`](v03-preprocessing-agent/Relazione%20Versione%203%20-%20Preprocessing%20Agent.pdf)
-- [`Report Version 3 - Preprocessing Agent.pdf`](v03-preprocessing-agent/Report%20Version%203%20-%20Preprocessing%20Agent.pdf)
+- [`Report Version 3 - Preprocessing Agent.pdf`](v03-preprocessing-agent/Report%20Versione%203%20-%20Preprocessing%20Agent.pdf)
 - [`Version 3.png`](v03-preprocessing-agent/Version%203.png)
 
 For Version 4:
 
 - [`building-agentic-automl.ipynb`](v04-model-selection/building-agentic-automl.ipynb)
 - [`Relazione Versione 4 - Model Selection.pdf`](v04-model-selection/Relazione%20Versione%204%20-%20Model%20Selection.pdf)
-- [`Report Version 4 - Model Selection.pdf`](v04-model-selection/Report%20Version%204%20-%20Model%20Selection.pdf)
+- [`Report Version 4 - Model Selection.pdf`](v04-model-selection/Report%20Versione%204%20-%20Model%20Selection.pdf)
 - [`Version 4.png`](v04-model-selection/Version%204.png)
 
 For Version 5:
 
 - [`building-agentic-automl.ipynb`](v05-smart-validation/building-agentic-automl.ipynb)
 - [`Relazione Versione 5 - Smart Validation.pdf`](v05-smart-validation/Relazione%20Versione%205%20-%20Smart%20Validation.pdf)
-- [`Report Version 5 - Smart Validation.pdf`](v05-smart-validation/Report%20Version%205%20-%20Smart%20Validation.pdf)
+- [`Report Version 5 - Smart Validation.pdf`](v05-smart-validation/Report%20Versione%205%20-%20Smart%20Validation.pdf)
 - [`Version 5.png`](v05-smart-validation/Version%205.png)
 
 For Version 6:
 
 - [`building-agentic-automl.ipynb`](v06-feature-engineering/building-agentic-automl.ipynb)
 - [`Relazione Versione 6 - Feature Engineering.pdf`](v06-feature-engineering/Relazione%20Versione%206%20-%20Feature%20Engineering.pdf)
-- [`Report Version 6 - Feature Engineering.pdf`](v06-feature-engineering/Report%20Version%206%20-%20Feature%20Engineering.pdf)
+- [`Report Version 6 - Feature Engineering.pdf`](v06-feature-engineering/Report%20Versione%206%20-%20Feature%20Engineering.pdf)
 - [`Version 6.png`](v06-feature-engineering/Version%206.png)
 
 For Version 7:
 
 - [`building-agentic-automl.ipynb`](v07-hyperparameter-optimization/building-agentic-automl.ipynb)
 - [`Relazione Versione 7 - Hyperparameter Optimization.pdf`](v07-hyperparameter-optimization/Relazione%20Versione%207%20-%20Hyperparameter%20Optimization.pdf)
-- [`Report Version 7 - Hyperparameter Optimization.pdf`](v07-hyperparameter-optimization/Report%20Version%207%20-%20Hyperparameter%20Optimization.pdf)
+- [`Report Version 7 - Hyperparameter Optimization.pdf`](v07-hyperparameter-optimization/Report%20Versione%207%20-%20Hyperparameter%20Optimization.pdf)
 - [`Version 7.png`](v07-hyperparameter-optimization/Version%207.png)
+
+For Version 8:
+
+- [`building-agentic-automl.ipynb`](v08-senior-agent/building-agentic-automl.ipynb)
+- [`Relazione Versione 8 - Autonomous Experiment Planning.pdf`](v08-senior-agent/Relazione%20Versione%208%20-%20Autonomous%20Experiment%20Planning.pdf)
+- [`Report Version 8 - Autonomous Experiment Planning.pdf`](v08-senior-agent/Report%20Version%208%20-%20Autonomous%20Experiment%20Planning.pdf)
+- [`Version 8.png`](v08-senior-agent/Version%208.png)
 
 ## Repository structure
 
@@ -2094,14 +2386,20 @@ building-agentic-automl/
 │   ├── Report Version 7 - Hyperparameter Optimization.pdf
 │   └── Version 7.png
 │
+├── v08-senior-agent/
+│   ├── building-agentic-automl.ipynb
+│   ├── Relazione Versione 8 - Autonomous Experiment Planning.pdf
+│   ├── Report Version 8 - Autonomous Experiment Planning.pdf
+│   └── Version 8.png
+│
 ├── README.md
 ├── LICENSE
 └── .gitignore
 ```
 
-The repository structure grows progressively as new versions are introduced.
-
 Each completed version remains available independently so that every architectural step can be studied and compared with the following versions.
+
+Version 8 completes the original roadmap while preserving all previous versions as independent learning resources.
 
 ## Run locally
 
@@ -2134,7 +2432,7 @@ Start Jupyter Notebook:
 jupyter notebook
 ```
 
-Then open one of the completed versions:
+Then open the version you want to study:
 
 ```text
 v01-baseline-agent/building-agentic-automl.ipynb
@@ -2143,6 +2441,8 @@ v03-preprocessing-agent/building-agentic-automl.ipynb
 v04-model-selection/building-agentic-automl.ipynb
 v05-smart-validation/building-agentic-automl.ipynb
 v06-feature-engineering/building-agentic-automl.ipynb
+v07-hyperparameter-optimization/building-agentic-automl.ipynb
+v08-senior-agent/building-agentic-automl.ipynb
 ```
 
 and run the cells in order.
@@ -2295,7 +2595,29 @@ select
 return
 ```
 
-The state now records dataset information, alternative preprocessing-feature engineering-model-hyperparameter experiments, the selected validation strategy, the selected preprocessing strategy, the selected feature engineering strategy, the selected model, the selected hyperparameters, the best score and the score variability.
+Version 8 changes the search process itself by adding autonomous experiment planning:
+
+```text
+observe
+   ↓
+inspect
+   ↓
+build candidate space
+   ↓
+plan next experiment
+   ↓
+execute selected experiment
+   ↓
+observe result
+   ↓
+update decision history
+   ↓
+plan again within budget
+   ↓
+return best observed configuration
+```
+
+The state now records dataset information, task type, validation strategy, experiment budget, executed experiments, decision reasons, execution time, failures, score trajectory and the best observed preprocessing-feature engineering-model-hyperparameter configuration.
 
 Each completed version remains available as an independent learning resource.
 
@@ -2308,9 +2630,9 @@ Each completed version remains available as an independent learning resource.
 - [x] Version 5 - Smart Validation
 - [x] Version 6 - Feature Engineering
 - [x] Version 7 - Hyperparameter Optimization
-- [ ] Version 8 - Senior Agent
+- [x] Version 8 - Autonomous Experiment Planning
 
-The exact architecture of future versions can evolve as new concepts are introduced.
+Version 8 completes the original roadmap.
 
 The guiding rule remains:
 
@@ -2318,35 +2640,31 @@ The guiding rule remains:
 
 ## Current limitations
 
-Version 7 is intentionally compact and educational:
+Version 8 is intentionally compact and educational:
 
-- task detection still relies only on the number of unique target values;
-- the Data Inspector remains descriptive and does not decide which preprocessing, feature engineering, models or hyperparameter spaces should be tried;
-- only two preprocessing strategies are compared: native missing-value handling and simple imputation;
+- task detection remains heuristic for discrete numerical targets;
+- dataset inspection records several signals, but the current planning policy uses missing-value information directly while the remaining signals are primarily contextual;
+- only two preprocessing strategies are available: native missing-value handling and simple imputation;
 - numerical imputation uses only the median;
 - categorical imputation uses only the most frequent value;
 - there is no scaling or comparison of encoding strategies;
 - there is no dedicated outlier detection or treatment;
-- duplicate rows, skewness and semantic feature types are not inspected yet;
 - feature engineering is limited to pairwise multiplication between numerical features;
 - there are no ratio, logarithmic, polynomial, datetime or categorical interaction strategies;
 - the number of interaction features grows quadratically with the number of numerical features;
 - there is no feature selection after feature generation;
 - model comparison is limited to LightGBM, XGBoost and CatBoost;
-- hyperparameter optimization uses only two predefined configurations per model;
-- hyperparameter search spaces are manually defined and intentionally small;
-- there is no random search, Bayesian optimization, Optuna or adaptive search strategy;
-- there is no early stopping or resource-aware tuning logic;
-- cross-validation is fixed to 5 folds;
-- there is no group-aware or time-series-aware validation logic;
-- there is no nested cross-validation or separate final holdout for an unbiased post-selection performance estimate;
-- all decisions are coordinated directly by one `agent()` function;
-- there is no planner or multi-agent architecture yet;
-- the best fitted pipeline is not yet persisted as a reusable artifact.
+- hyperparameter search spaces are manually defined and intentionally small, with only two configurations per model;
+- the Senior Agent planning policy is deterministic and rule-based;
+- the experiment budget is expressed as a number of experiments;
+- execution time is recorded but is not yet used to guide planning decisions;
+- there is no Bayesian optimization, reinforcement learning, LLM planning or dedicated early stopping;
+- validation is not group-aware or time-series-aware;
+- the best observed configuration is selected and reported from the same cross-validation process used for model selection, without a separate final holdout;
+- there is no nested cross-validation;
+- the state does not yet store a persistent fitted pipeline.
 
-These limitations are intentional.
-
-Version 7 focuses specifically on hyperparameter optimization. More advanced agentic decision-making and orchestration remain separate concepts for Version 8.
+These are intentional scope choices rather than unfinished roadmap items.
 
 ## Project status
 
@@ -2364,23 +2682,21 @@ Version 7 focuses specifically on hyperparameter optimization. More advanced age
 
 **Version 7 - Hyperparameter Optimization is completed.**
 
-The project currently provides a functional Agentic AutoML baseline, a dataset-awareness layer, preprocessing experimentation, automatic model comparison, task-aware cross-validation, automatic numerical feature engineering and controlled hyperparameter optimization.
+**Version 8 - Autonomous Experiment Planning is completed.**
 
-The agent can move automatically from a tabular dataset and target column to cross-validated experiments while adapting between classification and regression.
+Version 8 closes the original roadmap by adding a Senior Agent that plans experiments adaptively within a fixed budget instead of evaluating the complete candidate space exhaustively.
 
-Before training, it can inspect dataset dimensions, target behavior, feature types, missing values and feature cardinality.
+The final project can detect binary classification, multiclass classification and regression, inspect tabular datasets, compare preprocessing and feature engineering strategies, evaluate LightGBM, XGBoost and CatBoost, compare model-specific hyperparameter configurations, select task-aware validation and metrics, and maintain a transparent decision history for the experiments selected by the planner.
 
-It can compare native missing-value handling with simple imputation, compare the original feature space with pairwise numerical interactions, evaluate LightGBM, XGBoost and CatBoost, compare multiple hyperparameter configurations and validate every complete experiment across multiple folds.
+On Adult Income, the Senior Agent recovers the same best configuration found by Version 7 — CatBoost + native + none + baseline — while executing 10 experiments instead of all 24 available candidates.
 
-For classification, Version 7 keeps the original CatBoost configuration as the best experiment with mean ROC AUC `0.9306306263`.
+The generalization tests also demonstrate the same planning policy on multiclass classification and two regression representations without changing the agent logic.
 
-For regression, Version 7 selects CatBoost with `iterations=500`, `learning_rate=0.05` and `depth=6`, improving mean RMSE from `1.6283421164` in Version 6 to `1.6078463494`.
+The project can remain finished in this form. Documentation, compatibility fixes or small maintenance updates may still be made when useful.
 
-The state stores every experiment together with hyperparameters, fold scores, mean score and standard deviation, and returns the best preprocessing strategy, best feature engineering strategy, validation strategy, best model, best hyperparameters, best score and best standard deviation.
+At the same time, the repository is intentionally not declared permanently frozen. If a future concept is worth studying with the same **one version, one concept, one architectural improvement** philosophy, Building Agentic AutoML may one day receive additional versions beyond Version 8.
 
-The project is intentionally not considered complete at Version 7.
-
-Version 8 can focus on more advanced agentic decision-making while preserving the progressive educational structure of the project.
+There is currently no required Version 9: any future continuation would be a new extension of an already completed project.
 
 ## License
 
