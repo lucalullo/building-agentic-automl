@@ -2279,6 +2279,12 @@ Open the folder:
 
 ## Documentation
 
+The repository includes the final general project documentation:
+
+- [Project report - English](project-report-en.pdf)
+- [Relazione del progetto - Italiano](project-report-it.pdf)
+- [Building Agentic AutoML project roadmap infographic](infographic.png)
+
 Each completed version contains:
 
 - a Jupyter Notebook;
@@ -2290,49 +2296,49 @@ For Version 1:
 
 - [`building-agentic-automl.ipynb`](v01-baseline-agent/building-agentic-automl.ipynb)
 - [`Relazione Versione 1 - Baseline Agent.pdf`](v01-baseline-agent/Relazione%20Versione%201%20-%20Baseline%20Agent.pdf)
-- [`Report Version 1 - Baseline Agent.pdf`](v01-baseline-agent/Report%20Versione%201%20-%20Baseline%20Agent.pdf)
+- [`Report Version 1 - Baseline Agent.pdf`](v01-baseline-agent/Report%20Version%201%20-%20Baseline%20Agent.pdf)
 - [`Version 1.png`](v01-baseline-agent/Version%201.png)
 
 For Version 2:
 
 - [`building-agentic-automl.ipynb`](v02-data-inspector/building-agentic-automl.ipynb)
 - [`Relazione Versione 2 - Data Inspector.pdf`](v02-data-inspector/Relazione%20Versione%202%20-%20Data%20Inspector.pdf)
-- [`Report Version 2 - Data Inspector.pdf`](v02-data-inspector/Report%20Versione%202%20-%20Data%20Inspector.pdf)
+- [`Report Version 2 - Data Inspector.pdf`](v02-data-inspector/Report%20Version%202%20-%20Data%20Inspector.pdf)
 - [`Version 2.png`](v02-data-inspector/Version%202.png)
 
 For Version 3:
 
 - [`building-agentic-automl.ipynb`](v03-preprocessing-agent/building-agentic-automl.ipynb)
 - [`Relazione Versione 3 - Preprocessing Agent.pdf`](v03-preprocessing-agent/Relazione%20Versione%203%20-%20Preprocessing%20Agent.pdf)
-- [`Report Version 3 - Preprocessing Agent.pdf`](v03-preprocessing-agent/Report%20Versione%203%20-%20Preprocessing%20Agent.pdf)
+- [`Report Version 3 - Preprocessing Agent.pdf`](v03-preprocessing-agent/Report%20Version%203%20-%20Preprocessing%20Agent.pdf)
 - [`Version 3.png`](v03-preprocessing-agent/Version%203.png)
 
 For Version 4:
 
 - [`building-agentic-automl.ipynb`](v04-model-selection/building-agentic-automl.ipynb)
 - [`Relazione Versione 4 - Model Selection.pdf`](v04-model-selection/Relazione%20Versione%204%20-%20Model%20Selection.pdf)
-- [`Report Version 4 - Model Selection.pdf`](v04-model-selection/Report%20Versione%204%20-%20Model%20Selection.pdf)
+- [`Report Version 4 - Model Selection.pdf`](v04-model-selection/Report%20Version%204%20-%20Model%20Selection.pdf)
 - [`Version 4.png`](v04-model-selection/Version%204.png)
 
 For Version 5:
 
 - [`building-agentic-automl.ipynb`](v05-smart-validation/building-agentic-automl.ipynb)
 - [`Relazione Versione 5 - Smart Validation.pdf`](v05-smart-validation/Relazione%20Versione%205%20-%20Smart%20Validation.pdf)
-- [`Report Version 5 - Smart Validation.pdf`](v05-smart-validation/Report%20Versione%205%20-%20Smart%20Validation.pdf)
+- [`Report Version 5 - Smart Validation.pdf`](v05-smart-validation/Report%20Version%205%20-%20Smart%20Validation.pdf)
 - [`Version 5.png`](v05-smart-validation/Version%205.png)
 
 For Version 6:
 
 - [`building-agentic-automl.ipynb`](v06-feature-engineering/building-agentic-automl.ipynb)
 - [`Relazione Versione 6 - Feature Engineering.pdf`](v06-feature-engineering/Relazione%20Versione%206%20-%20Feature%20Engineering.pdf)
-- [`Report Version 6 - Feature Engineering.pdf`](v06-feature-engineering/Report%20Versione%206%20-%20Feature%20Engineering.pdf)
+- [`Report Version 6 - Feature Engineering.pdf`](v06-feature-engineering/Report%20Version%206%20-%20Feature%20Engineering.pdf)
 - [`Version 6.png`](v06-feature-engineering/Version%206.png)
 
 For Version 7:
 
 - [`building-agentic-automl.ipynb`](v07-hyperparameter-optimization/building-agentic-automl.ipynb)
 - [`Relazione Versione 7 - Hyperparameter Optimization.pdf`](v07-hyperparameter-optimization/Relazione%20Versione%207%20-%20Hyperparameter%20Optimization.pdf)
-- [`Report Version 7 - Hyperparameter Optimization.pdf`](v07-hyperparameter-optimization/Report%20Versione%207%20-%20Hyperparameter%20Optimization.pdf)
+- [`Report Version 7 - Hyperparameter Optimization.pdf`](v07-hyperparameter-optimization/Report%20Version%207%20-%20Hyperparameter%20Optimization.pdf)
 - [`Version 7.png`](v07-hyperparameter-optimization/Version%207.png)
 
 For Version 8:
