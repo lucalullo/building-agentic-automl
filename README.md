@@ -103,6 +103,8 @@ Each version preserves the previous workflow as much as possible so that the eff
 
 Version 8 completes the original project roadmap.
 
+![Building Agentic AutoML project roadmap infographic](infographic.png)
+
 ## Repository
 
 The project is available on GitHub:
